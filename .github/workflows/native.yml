@@ -1,0 +1,85 @@
+name: Build & Release (Native)
+
+on:
+  release:
+    types: [ published ] # Runs when you click "Publish Release" in GitHub UI
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: fe_character_creator
+
+jobs:
+  build-and-release:
+    name: release-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: fe_character_creator
+            asset_name: fe_character_creator-linux-amd64.tar.gz
+            use_cross: false
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: fe_character_creator.exe
+            # CHANGED: Updated from 'amd64' to 'x64' for better user experience
+            asset_name: fe_character_creator-windows-x64.zip
+            use_cross: false
+
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: fe_character_creator
+            asset_name: fe_character_creator-macos-arm64.tar.gz
+            use_cross: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build binary
+        run: cargo build --release --locked --package fe_character_creator --target ${{ matrix.target }}
+
+      - name: Strip binary (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+
+      - name: Prepare staging directory
+        shell: bash
+        run: |
+          mkdir staging
+          # Copy binary
+          cp "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "staging/"
+          # Copy assets (if they exist)
+          if [ -d "assets" ]; then cp -r assets staging/; fi
+          if [ -d "art" ]; then cp -r art staging/; fi
+
+      - name: Create Release Archive (Unix)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          cd staging
+          tar -czf ../${{ matrix.asset_name }} *
+
+      - name: Create Release Archive (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          Compress-Archive -Path staging/* -DestinationPath ${{ matrix.asset_name }}
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ matrix.asset_name }}

@@ -1,0 +1,10 @@
+[build]
+filehash = false
+
+[watch]
+watch = ["style.css", "../art/ART.md"]
+
+[[hooks]]
+stage = "pre_build"
+command = "cargo"
+command_arguments = ["run", "--bin", "build_html"]

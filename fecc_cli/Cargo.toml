@@ -1,0 +1,12 @@
+[package]
+name = "fecc_cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fecc_core = { path = "../fecc_core" }
+image = { version = "0.25.8", default-features = false, features = ["png"] }
+tokio = { version = "1.48.0", features = ["full"] }
+log = "0.4.28"
+strum = "0.27.2"
+simple_logger = "5.1.0"

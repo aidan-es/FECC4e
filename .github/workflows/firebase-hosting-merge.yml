@@ -1,0 +1,49 @@
+name: Deploy to Firebase Hosting on merge
+on:
+  release:
+    types: [ published ] # Runs when you click "Publish Release" in GitHub UI
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+
+      - name: Cache cargo-installed binaries
+        id: cache-cargo-bins
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/
+          key: cargo-bins-${{ runner.os }}-wb-0.2.105-trunk
+          restore-keys: |
+            cargo-bins-${{ runner.os }}-
+
+      - name: Cache Rust dependencies (Project)
+        uses: swatinem/rust-cache@v2
+
+      - name: Install wasm-bindgen-cli
+        if: steps.cache-cargo-bins.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.105
+
+      - name: Install Trunk
+        if: steps.cache-cargo-bins.outputs.cache-hit != 'true'
+        run: cargo install trunk
+
+      - name: Build with Trunk
+        working-directory: fecc_gui
+        run: trunk build --release
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FECHARACTERCREATOR }}
+          channelId: live
+          projectId: fecharactercreator

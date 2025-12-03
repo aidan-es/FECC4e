@@ -1,0 +1,16 @@
+# Mac stuff:
+.DS_Store
+
+# trunk output folder
+dist
+
+# Rust compile target directories:
+target
+target_ra
+target_wasm
+
+# Ignore JetBrains IDE configuration
+.idea/
+*.iml
+
+/art/index.html

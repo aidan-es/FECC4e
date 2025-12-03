@@ -1,0 +1,63 @@
+[config]
+default_to_workspace = false
+
+[tasks.check]
+
+dependencies = [
+    "check-all",
+    "check-wasm",
+    "fmt",
+    "clippy",
+    "typos",
+    "test-all",
+    "test-doc",
+    "build-trunk",
+    "post-check-message",
+]
+
+[tasks.check-all]
+description = "Runs cargo check on all targets"
+command = "cargo"
+args = ["check", "--quiet", "--workspace", "--all-targets"]
+
+[tasks.check-wasm]
+description = "Runs cargo check for the WASM target"
+command = "cargo"
+args = ["check", "--quiet", "--package", "fe_character_creator", "--target", "wasm32-unknown-unknown"]
+
+[tasks.fmt]
+description = "Checks formatting"
+command = "cargo"
+args = ["fmt", "--all", "--", "--check"]
+
+[tasks.clippy]
+description = "Runs clippy (linter)"
+command = "cargo"
+args = ["clippy", "--quiet", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings", "-W", "clippy::all"]
+
+[tasks.test-all]
+description = "Runs all tests"
+command = "cargo"
+args = ["test", "--quiet", "--workspace", "--all-targets", "--all-features"]
+
+[tasks.test-doc]
+description = "Runs doc tests"
+command = "cargo"
+args = ["test", "--quiet", "--workspace", "--doc"]
+
+[tasks.typos]
+description = "Checks for typos"
+install_crate = "typos-cli"
+command = "typos"
+
+[tasks.build-trunk]
+description = "Builds the Trunk (WASM) project"
+cwd = "fecc_gui"
+command = "trunk"
+args = ["build"]
+
+[tasks.post-check-message]
+description = "Prints a success message"
+script = [
+    '''echo "All checks passed successfully!"'''
+]

@@ -1,0 +1,50 @@
+name: Deploy to Firebase Hosting on PR
+on: pull_request
+permissions:
+  checks: write
+  contents: read
+  pull-requests: write
+jobs:
+  build_and_preview:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+
+      - name: Cache cargo-installed binaries
+        id: cache-cargo-bins
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/
+          key: cargo-bins-${{ runner.os }}-wb-0.2.105-trunk
+          restore-keys: |
+            cargo-bins-${{ runner.os }}-
+
+      - name: Cache Rust dependencies (Project)
+        uses: swatinem/rust-cache@v2
+
+      - name: Install wasm-bindgen-cli
+        if: steps.cache-cargo-bins.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.105
+
+      - name: Install Trunk
+        if: steps.cache-cargo-bins.outputs.cache-hit != 'true'
+        run: cargo install trunk
+
+      - name: Build with Trunk
+        working-directory: fecc_gui
+        run: trunk build --release
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FECHARACTERCREATOR }}
+          projectId: fecharactercreator

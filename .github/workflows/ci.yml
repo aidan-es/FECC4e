@@ -1,0 +1,42 @@
+name: CI Checks
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  APP_NAME: fe_character_creator
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # --- CI Checks (Runs on PRs and Pushes) ---
+  checks:
+    name: Checks (cargo make)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+
+      - name: Install cargo-make
+        uses: davidB/rust-cargo-make@v1
+
+      - name: Install Trunk
+        uses: jetli/trunk-action@v0.4.0
+        with:
+          version: 'latest'
+
+      # We'll cache cargo registry and cargo make installs
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: "cargo-make-checks"
+
+      - name: Run Cargo Make Check
+        # This runs: fmt, clippy, typos, tests, build-trunk
+        run: cargo make check
