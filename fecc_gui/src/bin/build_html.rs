@@ -40,7 +40,6 @@ fn main() {
 <!-- Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3. -->
 <html lang="en">
 <head>
-    <script data-website-id="f4114a98-d1b2-44eb-9929-3a308b7387dc" async src="https://analytics.introverted.social/site-metrics.js"></script>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="{description}">
