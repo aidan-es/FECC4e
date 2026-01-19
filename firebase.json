@@ -30,19 +30,6 @@
         ]
       }
     ]
-    },
-    {
-      "site": "fecharactercreator-analytics",
-      "public": "fecharactercreator-analytics",
-      "rewrites": [
-        {
-          "source": "**",
-          "run": {
-            "serviceId": "umami-service",
-            "region": "europe-west2"
-          }
-        }
-      ]
     }
   ]
 }

@@ -65,6 +65,7 @@ impl eframe::App for FECharacterCreator {
                             .or_default()
                             .insert(asset.id.clone(), asset);
                         self.add_art_error = None;
+                        self.toasts.success("Successfully added art.");
                     }
                     Err(e) => {
                         self.add_art_error = Some(e);
@@ -716,8 +717,6 @@ impl FECharacterCreator {
                 ui.vertical_centered(|ui| {
                     ui.heading("FE Character Creator, 4th Edition");
                     ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                    ui.add_space(5.0);
-                    ui.label("Copyright (C) 2025 aidan-es");
                     ui.add_space(8.0);
 
                     ui.label("This software comes with ABSOLUTELY NO WARRANTY.");
