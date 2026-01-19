@@ -6,8 +6,8 @@ A cross-platform desktop and web application for creating custom character portr
 series.
 
 This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by
-TheFlyingMinotaur, updated by BaconMaster120 and converted to Scarla by ValeTheVioletMote - these being considered the
-1st, 2nd and 3rd 'versions' or 'editions' respectively. I use the word 'edition' instead, in the hope of myself
+TheFlyingMinotaur, updated by BaconMaster120, and converted to Scarla by ValeTheVioletMote - these being considered the
+1st, 2nd, and 3rd 'versions' or 'editions' respectively. I use the word 'edition' instead, in the hope of myself
 iterating with improvements and new features in future versions.
 
 Many art assets are by Iscaneus.
@@ -18,7 +18,13 @@ Many art assets are by Iscaneus.
   use on any device with a web browser such as mobile devices.
 - **Part Search** Conveniently find character parts you know the name of.
 - **Drag and Drop** Intuitively drag assets to position them on the canvas.
-- **Improved Asset Transformations** Rotation and resising use familiar mouse controls. Also you may now flip assets.
+- **Improved Asset Transformations** Rotation and resizing use familiar mouse controls. Also, you may now flip assets.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/Asset_Transformations_Dark.gif">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/Asset_Transformations_Light.gif">
+  <img alt="Asset Transformation Demonstration" src=".github/assets/Asset_Transformations_Light.gif">
+</picture>
 
 ## Getting Started
 
@@ -43,18 +49,18 @@ the Canvas in the centre.
    appear:
     - **Move**: Click and drag the part to move it.
     - **Scale**: Click and drag the corner handles to scale the part.
-    - **Rotate**: Click and drag the rotate handles to rotate the part.
+    - **Rotate**: Click and drag the rotation handles to rotate the part.
 3. **Colouring**: Use the Colour Panel to customise the colours for each aspect of the character. Each `Colourable` part
    has its own colour ramp, and you can either select from a predefined palette or choose a custom colour using the
    colour picker.
 4. **Exporting**: Open the "Export" panel. From here, you can set the character's name, choose an output resolution, and save the portrait and/or token as a PNG
    image.
 5. **Saving and Loading**: Open the "Save/Load" Panel You can save your character's configuration to a `.fecc` file, which can be loaded later to
-   continue editing.
+   continue editing. (Currently incompatible with saves from the previous version, but a dedicated import is planned for V3 saves.)
 
 ### Adding Your Own Art
 
-To add your own custom assets, please refer to the [guide](https://fecc.introverted.social/art)).
+To add your own custom assets, please refer to the [guide](https://fecc.introverted.social/art).
 
 ## Building from Source (for Developers)
 
@@ -69,14 +75,14 @@ To build and run the application locally, you will need to have the Rust program
     ```
 
 3  **Build and run:**
-    -   **Native:**
+-    **Native:**
         ```bash
         cargo run --release
         ```
-    -   **Web:**
-        ```bash
-        trunk serve --open --release
-        ```
+-   **Web:**
+       ```bash
+       trunk serve --open --release
+       ```
 
 ### Contributing
 
