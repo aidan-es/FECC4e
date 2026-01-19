@@ -14,7 +14,6 @@ use strum::IntoEnumIterator;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     simple_logger::init_with_level(log::Level::Info)?;
 
-    log::info!("Copyright (C) 2025 aidan-es");
     log::info!("This software comes with ABSOLUTELY NO WARRANTY.");
     log::info!("Licensed under the GNU AGPLv3 - excluding art assets.");
     log::info!("Source Code: https://github.com/aidan-es/FECC4e");

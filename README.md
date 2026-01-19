@@ -92,5 +92,3 @@ Contributions are most welcome. Please feel free to open an issue, submit a pull
 
 **FECC4e** is open-source software licensed under the [GNU Affero General Public License v3.0 (AGPLv3)](LICENSE) -
 excluding art assets.
-
-Copyright (C) 2025 aidan-es.
