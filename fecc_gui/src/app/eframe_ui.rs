@@ -65,6 +65,7 @@ impl eframe::App for FECharacterCreator {
                             .or_default()
                             .insert(asset.id.clone(), asset);
                         self.add_art_error = None;
+                        self.toasts.success("Successfully added art.");
                     }
                     Err(e) => {
                         self.add_art_error = Some(e);
