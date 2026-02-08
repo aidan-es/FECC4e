@@ -566,6 +566,11 @@ impl eframe::App for FECharacterCreator {
                                 ExportSize::Double,
                                 ExportSize::Double.display_name(),
                             );
+                            ui.selectable_value(
+                                &mut self.export_size_selection,
+                                ExportSize::ROMHack,
+                                ExportSize::ROMHack.display_name(),
+                            )
                         });
                 });
 
