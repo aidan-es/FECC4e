@@ -40,6 +40,7 @@ fn main() {
 <!-- Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3. -->
 <html lang="en">
 <head>
+    <meta property="og:site_name" content="FE Character Creator" />
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="{description}">
