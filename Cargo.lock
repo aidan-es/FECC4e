@@ -1265,6 +1265,7 @@ dependencies = [
  "getrandom 0.4.1",
  "image",
  "indexmap",
+ "itertools",
  "js-sys",
  "log",
  "pulldown-cmark",

@@ -4,10 +4,7 @@ mod canvas_interaction;
 mod eframe_ui;
 
 use fecc_core::asset::{Asset, AssetType};
-use fecc_core::character::Colourable::{
-    Accessory, Cloth, EyeAndBeard, Hair, Leather, Metal, Skin, Trim,
-};
-use fecc_core::character::{Character, CharacterPart, ColourPalette, Colourable};
+use fecc_core::character::{Character, CharacterPart, ColourPalette, Colourable, Shade};
 use fecc_core::export::ExportSize;
 use fecc_core::file_io::{load_asset_libraries, load_colours_from_csv, load_image_bytes};
 use fecc_core::types::Point;
@@ -19,6 +16,7 @@ use futures_channel::mpsc;
 use futures_util::future::join_all;
 use image::RgbaImage;
 use indexmap::IndexMap;
+use itertools::iproduct;
 use std::path::PathBuf;
 use std::sync::Arc;
 use strum::IntoEnumIterator as _;
@@ -85,7 +83,7 @@ pub struct FECharacterCreator {
 
     #[serde(skip)]
     search_queries: HashMap<AssetType, String>,
-    colour_picker_open_state: HashMap<Colourable, bool>,
+    colour_picker_open_state: HashMap<(Colourable, Shade), bool>,
     outline_picker_open_state: HashMap<AssetType, bool>,
     portrait_rect: Rect,
     token_rect: Rect,
@@ -177,18 +175,9 @@ impl Default for FECharacterCreator {
             randomise_used: false,
             randomise_colours_too: false,
             search_queries: Default::default(),
-            colour_picker_open_state: [
-                (Hair, false),
-                (EyeAndBeard, false),
-                (Skin, false),
-                (Metal, false),
-                (Trim, false),
-                (Cloth, false),
-                (Leather, false),
-                (Accessory, false),
-            ]
-            .into_iter()
-            .collect(),
+            colour_picker_open_state: iproduct!(Colourable::iter(), Shade::iter())
+                .map(|combo| (combo, false))
+                .collect(),
             outline_picker_open_state: [
                 (AssetType::Armour, false),
                 (AssetType::Face, false),
@@ -931,7 +920,7 @@ impl FECharacterCreator {
 
 #[cfg(target_arch = "wasm32")]
 impl FECharacterCreator {
-    fn save_image(image: &image::RgbaImage, filename_stem: String) {
+    fn save_image(image: &RgbaImage, filename_stem: String) {
         use std::io::Cursor;
 
         let mut bytes: Vec<u8> = Vec::new();
