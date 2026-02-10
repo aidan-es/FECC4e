@@ -6,6 +6,7 @@ use eframe::emath::vec2;
 use eframe::epaint::{Color32, Stroke};
 use egui::ahash::HashSet;
 use egui::{Button, Context, Image, RichText, Ui};
+use egui_commonmark::CommonMarkViewer;
 use egui_extras::install_image_loaders;
 use egui_extras::{Column, TableBuilder};
 use fecc_core::asset::AssetType;
@@ -710,36 +711,40 @@ impl FECharacterCreator {
     }
 
     fn show_about_window(&mut self, ctx: &Context) {
+        let version = env!("CARGO_PKG_VERSION");
+
+        // Define your content as a standard Markdown string
+        let markdown_content = format!(
+            r#"
+# FE Character Creator, 4th Edition
+**Version {version}**
+
+This software comes with **ABSOLUTELY NO WARRANTY**.
+Licensed under the [GNU AGPLv3](https://www.gnu.org/licenses/agpl-3.0.html) - excluding art assets.
+
+[Source Code](https://github.com/aidan-es/FECC4e)
+
+---
+
+### Credits
+Built with [Rust](https://www.rust-lang.org/) and [egui](https://github.com/emilk/egui).
+
+This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by [TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scarla by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc).
+
+Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
+"#
+        );
+
         egui::Window::new("About")
             .open(&mut self.about_window_open)
             .collapsible(false)
-            .resizable(false)
+            .resizable(false) // CommonMarkViewer handles resizing, but fixed is fine too
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.heading("FE Character Creator, 4th Edition");
-                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                    ui.add_space(8.0);
-
-                    ui.label("This software comes with ABSOLUTELY NO WARRANTY.");
-                    ui.label("Licensed under the GNU AGPLv3 - excluding art assets.");
-
-                    ui.add_space(8.0);
-
-                    ui.hyperlink_to("Source Code", "https://github.com/aidan-es/FECC4e");
-                    ui.hyperlink_to("Full License", "https://www.gnu.org/licenses/agpl-3.0.html");
-                    ui.add_space(10.0);
-                    ui.label("Credits:");
-                    ui.hyperlink_to("Rust", "https://www.rust-lang.org/");
-                    ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-                    ui.add_space(5.0);
-                    ui.label(RichText::new(
-                        "This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by TheFlyingMinotaur, updated by BaconMaster120 and converted to Scarla by ValeTheVioletMote."
-                    ));
-                    ui.add_space(5.0);
-                    ui.label(RichText::new("Many art assets are by Iscaneus."));
-
-                });
+                // Render the Markdown
+                CommonMarkViewer::new()
+                    .max_image_width(Some(512)) // Optional: limit image width if you add logos
+                    .show(ui, &mut self.markdown_cache, &markdown_content);
             });
     }
 

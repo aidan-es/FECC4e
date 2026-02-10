@@ -19,6 +19,7 @@ use indexmap::IndexMap;
 use itertools::iproduct;
 use std::path::PathBuf;
 use std::sync::Arc;
+use egui_commonmark::CommonMarkCache;
 use strum::IntoEnumIterator as _;
 use strum_macros::EnumIter;
 
@@ -158,6 +159,9 @@ pub struct FECharacterCreator {
 
     #[serde(skip)]
     about_window_open: bool,
+
+    #[serde(skip)]
+    markdown_cache: CommonMarkCache,
 }
 
 impl Default for FECharacterCreator {
@@ -226,6 +230,7 @@ impl Default for FECharacterCreator {
 
             toasts: Toasts::new().with_anchor(Anchor::BottomRight),
             about_window_open: false,
+            markdown_cache: CommonMarkCache::default(),
         }
     }
 }
