@@ -309,8 +309,13 @@ impl eframe::App for FECharacterCreator {
                 {
                     colour_picker_frame.show(ui, |ui| {
                         ui.vertical_centered(|ui| {
-                            let base_colour_c32 =
-                                to_c32(self.character.character_colours[&colourable].base);
+                            let base_colour_c32 = to_c32(
+                                self.character
+                                    .character_colours
+                                    .entry(colourable)
+                                    .or_default()
+                                    .base,
+                            );
                             let text_colour = base_colour_c32
                                 .find_contrasting_colour_on_background(
                                     ui.style().visuals.panel_fill,
@@ -901,50 +906,54 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
                     self.texture_cache.clear();
                 }
 
-                egui::CollapsingHeader::new("Colour Palette")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        let columns = 9;
-                        let palette_colours = self.colour_palettes[&colourable].colours();
-                        let rows = (palette_colours.len() as f32 / columns as f32).ceil() as usize;
-                        let available_height = ui.available_height();
-                        let table = TableBuilder::new(ui)
-                            .striped(false)
-                            .resizable(false)
-                            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                            .columns(Column::auto(), columns)
-                            .min_scrolled_height(100.0)
-                            .max_scroll_height(available_height);
+                if let Some(palette) = self.colour_palettes.get(&colourable) {
+                    egui::CollapsingHeader::new("Colour Palette")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            let columns = 9;
+                            let palette_colours = palette.colours();
+                            let rows =
+                                (palette_colours.len() as f32 / columns as f32).ceil() as usize;
+                            let available_height = ui.available_height();
+                            let table = TableBuilder::new(ui)
+                                .striped(false)
+                                .resizable(false)
+                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                .columns(Column::auto(), columns)
+                                .min_scrolled_height(100.0)
+                                .max_scroll_height(available_height);
 
-                        table.body(|mut body| {
-                            for i in 0..rows {
-                                body.row(20.0, |mut row| {
-                                    for ii in 0..columns {
-                                        row.col(|ui| {
-                                            if i * columns + ii < palette_colours.len() {
-                                                let colour = palette_colours[(i * columns) + ii];
-                                                if ui
-                                                    .add(
-                                                        Button::new("")
-                                                            .min_size(vec2(20.0, 20.0))
-                                                            .fill(to_c32(colour)),
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    self.character
-                                                        .character_colours
-                                                        .entry(colourable)
-                                                        .or_default()
-                                                        .set(colour);
-                                                    self.texture_cache.clear();
+                            table.body(|mut body| {
+                                for i in 0..rows {
+                                    body.row(20.0, |mut row| {
+                                        for ii in 0..columns {
+                                            row.col(|ui| {
+                                                if i * columns + ii < palette_colours.len() {
+                                                    let colour =
+                                                        palette_colours[(i * columns) + ii];
+                                                    if ui
+                                                        .add(
+                                                            Button::new("")
+                                                                .min_size(vec2(20.0, 20.0))
+                                                                .fill(to_c32(colour)),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        self.character
+                                                            .character_colours
+                                                            .entry(colourable)
+                                                            .or_default()
+                                                            .set(colour);
+                                                        self.texture_cache.clear();
+                                                    }
                                                 }
-                                            }
-                                        });
-                                    }
-                                });
-                            }
+                                            });
+                                        }
+                                    });
+                                }
+                            });
                         });
-                    });
+                }
             });
     }
 

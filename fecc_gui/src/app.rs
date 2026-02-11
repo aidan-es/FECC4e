@@ -11,6 +11,7 @@ use fecc_core::types::Point;
 
 use egui::ahash::{HashMap, HashSet};
 use egui::{Align, Color32, ColorImage, Context, Pos2, Rect, Shape, Ui, Vec2, pos2, vec2};
+use egui_commonmark::CommonMarkCache;
 use egui_notify::{Anchor, Toasts};
 use futures_channel::mpsc;
 use futures_util::future::join_all;
@@ -19,7 +20,6 @@ use indexmap::IndexMap;
 use itertools::iproduct;
 use std::path::PathBuf;
 use std::sync::Arc;
-use egui_commonmark::CommonMarkCache;
 use strum::IntoEnumIterator as _;
 use strum_macros::EnumIter;
 
@@ -448,8 +448,10 @@ impl FECharacterCreator {
 
                             if asset.1.asset_type == AssetType::Hair
                                 && let Some(back_part_id) = &asset.1.back_part
-                                && let Some(back_asset) = self.asset_libraries[&AssetType::HairBack]
-                                    .get(back_part_id)
+                                && let Some(back_asset) = self
+                                    .asset_libraries
+                                    .get(&AssetType::HairBack)
+                                    .and_then(|lib| lib.get(back_part_id))
                                     .cloned()
                                 && let Some(back_texture) =
                                     self.get_or_load_texture(ctx, &back_asset)
@@ -556,8 +558,10 @@ impl FECharacterCreator {
             if asset_type == AssetType::Hair
                 && let Some(back_part_id) = &asset.back_part
                 && let Some(hair_part) = self.character.get_character_part(&AssetType::Hair)
-                && let Some(back_asset) =
-                    self.asset_libraries[&AssetType::HairBack].get(back_part_id)
+                && let Some(back_asset) = self
+                    .asset_libraries
+                    .get(&AssetType::HairBack)
+                    .and_then(|lib| lib.get(back_part_id))
             {
                 self.character.set_character_part(
                     &AssetType::HairBack,
