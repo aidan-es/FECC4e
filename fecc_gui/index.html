@@ -9,6 +9,18 @@
     content="Fire Emblem Character Creator, 4th Edition: A cross-platform desktop and web application for creating custom character portraits in the style of the Fire Emblem series."
     name="description">
 
+<script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "FE Character Creator",
+        "alternateName": [
+            "FECC4e",
+            "Fire Emblem Character Creator"
+        ],
+        "url": "https://fecc.introverted.social/"
+    }
+</script>
 
 <script type="module">
     // Import the functions you need from the SDKs you need
@@ -30,6 +42,7 @@
 
 
 <head>
+    <meta content="FE Character Creator" property="og:site_name"/>
     <title>FE Character Creator</title>
 
     <link data-bin="fe_character_creator" data-trunk data-wasm-opt="4" rel="rust" />

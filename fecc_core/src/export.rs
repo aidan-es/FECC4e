@@ -14,6 +14,7 @@ pub enum ExportSize {
     Half,
     Original,
     Double,
+    ROMHack,
 }
 
 impl ExportSize {
@@ -37,6 +38,7 @@ impl ExportSize {
             Self::Half => (48, 48),
             Self::Original => (96, 96),
             Self::Double => (192, 192),
+            Self::ROMHack => (96, 80),
         }
     }
 
@@ -46,6 +48,7 @@ impl ExportSize {
             Self::Half => (32, 32),
             Self::Original => (64, 64),
             Self::Double => (128, 128),
+            Self::ROMHack => (64, 64),
         }
     }
 }
@@ -53,8 +56,7 @@ impl ExportSize {
 /// Exports a character portrait or token as an `RgbaImage`.
 ///
 /// Composites the character's parts into a single image, applying
-/// the necessary transformations to match their appearance on the UI canvas. It
-/// handles the conversion from UI coordinates to the final output image coordinates.
+/// the necessary transformations to match their appearance on the UI canvas.
 pub fn export_character(
     character: &Character,
     parts_to_draw: &[AssetType],
@@ -66,10 +68,10 @@ pub fn export_character(
     }
 
     // Create an oversized buffer to prevent clipping during rotation and scaling.
-    let buffer_dim = output_size.0.max(output_size.1) * 2;
-    let mut buffer = RgbaImage::new(buffer_dim, buffer_dim);
-    let buffer_centre_x = buffer_dim / 2;
-    let buffer_centre_y = buffer_dim / 2;
+    let buffer_dimension = output_size.0.max(output_size.1) * 2;
+    let mut buffer = RgbaImage::new(buffer_dimension, buffer_dimension);
+    let buffer_centre_x = buffer_dimension / 2;
+    let buffer_centre_y = buffer_dimension / 2;
 
     // The overall scaling factor from UI canvas to exported image.
     let export_scale = output_size.0 as f32 / ui_canvas_size.x;
@@ -115,7 +117,8 @@ pub fn export_character(
             );
 
             let target_centre_on_output_x = part.position.x * export_scale;
-            let target_centre_on_output_y = part.position.y * export_scale;
+            let target_centre_on_output_y =
+                part.position.y * (output_size.1 as f32 / ui_canvas_size.y);
 
             // Calculate the top-left corner for overlaying the rotated image.
             // Use integer division for output_size to match crop_imm's behaviour.
@@ -135,13 +138,71 @@ pub fn export_character(
         }
     }
 
-    let crop_x = buffer_centre_x - (output_size.0 / 2);
-    let crop_y = buffer_centre_y - (output_size.1 / 2);
+    Some(content_aware_crop(&buffer, output_size))
+}
 
-    let final_image =
-        imageops::crop_imm(&buffer, crop_x, crop_y, output_size.0, output_size.1).to_image();
+/// Applies content-aware cropping to the buffer. Particularly necessary where the output image
+/// is not rectangular (height less than width).
+///
+/// Preference for preserving pixels at the bottom of the image.
+fn content_aware_crop(buffer: &RgbaImage, output_size: (u32, u32)) -> RgbaImage {
+    let (output_width, output_height) = output_size;
+    let buffer_centre_x = buffer.width() / 2;
+    let buffer_centre_y = buffer.height() / 2;
 
-    Some(final_image)
+    let crop_x = buffer_centre_x - (output_width / 2);
+    let mut crop_y = buffer_centre_y - (output_height / 2);
+
+    let default_crop_bottom = crop_y + output_height;
+
+    let mut min_content_y = buffer.height();
+    let mut max_content_y = 0;
+
+    for y in 0..crop_y {
+        let mut row_has_content = false;
+        for x in 0..buffer.width() {
+            if buffer.get_pixel(x, y)[3] > 0 {
+                min_content_y = y;
+                row_has_content = true;
+                break;
+            }
+        }
+        if row_has_content {
+            break; // Found the absolute highest pixel.
+        }
+    }
+
+    for y in (default_crop_bottom..buffer.height()).rev() {
+        let mut row_has_content = false;
+        for x in 0..buffer.width() {
+            if buffer.get_pixel(x, y)[3] > 0 {
+                max_content_y = y;
+                row_has_content = true;
+                break;
+            }
+        }
+        if row_has_content {
+            break; // Found the absolute lowest pixel.
+        }
+    }
+
+    // Apply Shifts if content was found in the 'danger zones'
+    if min_content_y < buffer.height() || max_content_y > 0 {
+        let view_height = output_height;
+        let crop_bottom = crop_y + view_height;
+
+        if min_content_y < crop_y {
+            let shift = crop_y - min_content_y;
+            crop_y -= shift;
+        }
+
+        if max_content_y >= crop_bottom {
+            let shift = (max_content_y - crop_bottom) + 1;
+            crop_y += shift;
+        }
+    }
+
+    imageops::crop_imm(buffer, crop_x, crop_y, output_width, output_height).to_image()
 }
 
 #[cfg(test)]
@@ -224,12 +285,6 @@ mod tests {
 
         assert!(result.is_some());
         let img = result.unwrap();
-
-        // Check centre pixel, should be red (or recoloured version of it)
-        // The input red is 255, which is > 20 so it is not recoloured by default unless mapped.
-        // In default character, colours are set.
-        // But recolour logic maps colours based on red channel / 10.
-        // 255 / 10 = 25. Map size is 21. So it won't be recoloured.
 
         let centre_pixel = img.get_pixel(50, 50);
         assert_eq!(centre_pixel[0], 255);

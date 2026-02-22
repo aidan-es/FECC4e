@@ -8,6 +8,30 @@ use crate::types::{Point, Rgba};
 use std::collections::HashMap;
 use strum_macros::{Display, EnumIter};
 
+/// Variants available for a Colourable
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Clone,
+    Copy,
+    EnumIter,
+    Display,
+    Ord,
+    PartialOrd,
+    serde::Deserialize,
+    serde::Serialize,
+)]
+pub enum Shade {
+    Light,
+    Normal,
+    Dark,
+    Darker,
+    Darkest,
+    Base,
+}
+
 /// Represents a distinct, colourable area of a character asset.
 #[derive(
     Debug,
