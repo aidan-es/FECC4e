@@ -84,6 +84,12 @@ To build and run the application locally, you will need to have the Rust program
        trunk serve --open --release
        ```
 
+Automatic builds and tests can be run using the `cargo-make` crate and running:
+
+```bash
+cargo make check
+```
+
 ### Contributing
 
 Contributions are most welcome. Please feel free to open an issue, submit a pull request or contact me by email - hi@ the FECC domain listed above.
