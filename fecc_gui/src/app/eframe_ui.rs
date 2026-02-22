@@ -77,7 +77,7 @@ impl eframe::App for FECharacterCreator {
         }
 
         if let Some(mut rx) = self.loaded_character_receiver.take() {
-            if let Ok(Some(result)) = rx.try_next() {
+            if let Ok(result) = rx.try_recv() {
                 match result {
                     Ok(loaded_character) => {
                         if self.is_character_valid(&loaded_character) {
@@ -830,7 +830,7 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
 
     fn update_stored_image_data_cache(&mut self) {
         if let Some(rx) = self.image_receiver.as_mut() {
-            while let Ok(Some((id, result))) = rx.try_next() {
+            while let Ok((id, result)) = rx.try_recv() {
                 self.images_in_flight.remove(&id);
                 match result {
                     Ok(image_data) => {
