@@ -79,7 +79,8 @@ jobs:
           Compress-Archive -Path staging/* -DestinationPath ${{ matrix.asset_name }}
 
       - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
+        # Pinning to v2.4.2 to mitigate race-condition in v2.5.0 (See: https://github.com/softprops/action-gh-release/issues/705)
+        uses: softprops/action-gh-release@v2.4.2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: ${{ matrix.asset_name }}
