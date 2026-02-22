@@ -4,21 +4,20 @@ mod canvas_interaction;
 mod eframe_ui;
 
 use fecc_core::asset::{Asset, AssetType};
-use fecc_core::character::Colourable::{
-    Accessory, Cloth, EyeAndBeard, Hair, Leather, Metal, Skin, Trim,
-};
-use fecc_core::character::{Character, CharacterPart, ColourPalette, Colourable};
+use fecc_core::character::{Character, CharacterPart, ColourPalette, Colourable, Shade};
 use fecc_core::export::ExportSize;
 use fecc_core::file_io::{load_asset_libraries, load_colours_from_csv, load_image_bytes};
 use fecc_core::types::Point;
 
 use egui::ahash::{HashMap, HashSet};
 use egui::{Align, Color32, ColorImage, Context, Pos2, Rect, Shape, Ui, Vec2, pos2, vec2};
+use egui_commonmark::CommonMarkCache;
 use egui_notify::{Anchor, Toasts};
 use futures_channel::mpsc;
 use futures_util::future::join_all;
 use image::RgbaImage;
 use indexmap::IndexMap;
+use itertools::iproduct;
 use std::path::PathBuf;
 use std::sync::Arc;
 use strum::IntoEnumIterator as _;
@@ -85,7 +84,7 @@ pub struct FECharacterCreator {
 
     #[serde(skip)]
     search_queries: HashMap<AssetType, String>,
-    colour_picker_open_state: HashMap<Colourable, bool>,
+    colour_picker_open_state: HashMap<(Colourable, Shade), bool>,
     outline_picker_open_state: HashMap<AssetType, bool>,
     portrait_rect: Rect,
     token_rect: Rect,
@@ -160,6 +159,9 @@ pub struct FECharacterCreator {
 
     #[serde(skip)]
     about_window_open: bool,
+
+    #[serde(skip)]
+    markdown_cache: CommonMarkCache,
 }
 
 impl Default for FECharacterCreator {
@@ -177,18 +179,9 @@ impl Default for FECharacterCreator {
             randomise_used: false,
             randomise_colours_too: false,
             search_queries: Default::default(),
-            colour_picker_open_state: [
-                (Hair, false),
-                (EyeAndBeard, false),
-                (Skin, false),
-                (Metal, false),
-                (Trim, false),
-                (Cloth, false),
-                (Leather, false),
-                (Accessory, false),
-            ]
-            .into_iter()
-            .collect(),
+            colour_picker_open_state: iproduct!(Colourable::iter(), Shade::iter())
+                .map(|combo| (combo, false))
+                .collect(),
             outline_picker_open_state: [
                 (AssetType::Armour, false),
                 (AssetType::Face, false),
@@ -237,6 +230,7 @@ impl Default for FECharacterCreator {
 
             toasts: Toasts::new().with_anchor(Anchor::BottomRight),
             about_window_open: false,
+            markdown_cache: CommonMarkCache::default(),
         }
     }
 }
@@ -454,8 +448,10 @@ impl FECharacterCreator {
 
                             if asset.1.asset_type == AssetType::Hair
                                 && let Some(back_part_id) = &asset.1.back_part
-                                && let Some(back_asset) = self.asset_libraries[&AssetType::HairBack]
-                                    .get(back_part_id)
+                                && let Some(back_asset) = self
+                                    .asset_libraries
+                                    .get(&AssetType::HairBack)
+                                    .and_then(|lib| lib.get(back_part_id))
                                     .cloned()
                                 && let Some(back_texture) =
                                     self.get_or_load_texture(ctx, &back_asset)
@@ -562,8 +558,10 @@ impl FECharacterCreator {
             if asset_type == AssetType::Hair
                 && let Some(back_part_id) = &asset.back_part
                 && let Some(hair_part) = self.character.get_character_part(&AssetType::Hair)
-                && let Some(back_asset) =
-                    self.asset_libraries[&AssetType::HairBack].get(back_part_id)
+                && let Some(back_asset) = self
+                    .asset_libraries
+                    .get(&AssetType::HairBack)
+                    .and_then(|lib| lib.get(back_part_id))
             {
                 self.character.set_character_part(
                     &AssetType::HairBack,
@@ -931,7 +929,7 @@ impl FECharacterCreator {
 
 #[cfg(target_arch = "wasm32")]
 impl FECharacterCreator {
-    fn save_image(image: &image::RgbaImage, filename_stem: String) {
+    fn save_image(image: &RgbaImage, filename_stem: String) {
         use std::io::Cursor;
 
         let mut bytes: Vec<u8> = Vec::new();

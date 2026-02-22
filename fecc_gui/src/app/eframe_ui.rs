@@ -6,11 +6,12 @@ use eframe::emath::vec2;
 use eframe::epaint::{Color32, Stroke};
 use egui::ahash::HashSet;
 use egui::{Button, Context, Image, RichText, Ui};
+use egui_commonmark::CommonMarkViewer;
 use egui_extras::install_image_loaders;
 use egui_extras::{Column, TableBuilder};
 use fecc_core::asset::AssetType;
 use fecc_core::character::Colourable::Skin;
-use fecc_core::character::{CharacterPartColours, Colourable};
+use fecc_core::character::{CharacterPartColours, Colourable, Shade};
 use fecc_core::export::{ExportSize, export_character};
 use fecc_core::random::{randomize_assets, randomize_colours};
 use fecc_core::types::Rgba;
@@ -308,8 +309,13 @@ impl eframe::App for FECharacterCreator {
                 {
                     colour_picker_frame.show(ui, |ui| {
                         ui.vertical_centered(|ui| {
-                            let base_colour_c32 =
-                                to_c32(self.character.character_colours[&colourable].base);
+                            let base_colour_c32 = to_c32(
+                                self.character
+                                    .character_colours
+                                    .entry(colourable)
+                                    .or_default()
+                                    .base,
+                            );
                             let text_colour = base_colour_c32
                                 .find_contrasting_colour_on_background(
                                     ui.style().visuals.panel_fill,
@@ -328,7 +334,7 @@ impl eframe::App for FECharacterCreator {
                                 if ui.add(button).clicked() {
                                     *self
                                         .colour_picker_open_state
-                                        .entry(colourable)
+                                        .entry((colourable, Shade::Base))
                                         .or_insert(false) ^= true;
                                 }
 
@@ -357,57 +363,54 @@ impl eframe::App for FECharacterCreator {
                                 }
                             });
 
-                            if self.colour_picker_open_state[&colourable] {
-                                self.present_colour_picker(ctx, &colourable);
-                            }
-
                             egui::Grid::new(colourable).show(ui, |ui| {
-                                let colour_part = self
-                                    .character
-                                    .character_colours
-                                    .entry(colourable)
-                                    .or_default();
-                                let mut changed = false;
-
-                                let mut lighter = to_c32(colour_part.lighter);
-                                if ui.color_edit_button_srgba(&mut lighter).changed() {
-                                    colour_part.lighter = from_c32(lighter);
-                                    changed = true;
-                                }
-
-                                let mut neutral = to_c32(colour_part.neutral);
-                                if ui.color_edit_button_srgba(&mut neutral).changed() {
-                                    colour_part.neutral = from_c32(neutral);
-                                    changed = true;
-                                }
-
-                                let mut darker = to_c32(colour_part.darker);
-                                if ui.color_edit_button_srgba(&mut darker).changed() {
-                                    colour_part.darker = from_c32(darker);
-                                    changed = true;
-                                }
-
-                                if colourable == Skin {
-                                    ui.end_row();
-                                    let mut darker_darker = to_c32(colour_part.darker_darker);
-                                    if ui.color_edit_button_srgba(&mut darker_darker).changed() {
-                                        colour_part.darker_darker = from_c32(darker_darker);
-                                        changed = true;
+                                for shade in Shade::iter() {
+                                    if colourable == Skin && shade == Shade::Darker {
+                                        ui.end_row();
                                     }
 
-                                    let mut darker_darker_darker =
-                                        to_c32(colour_part.darker_darker_darker);
-                                    if ui
-                                        .color_edit_button_srgba(&mut darker_darker_darker)
-                                        .changed()
-                                    {
-                                        colour_part.darker_darker_darker =
-                                            from_c32(darker_darker_darker);
-                                        changed = true;
+                                    let show_button = match shade {
+                                        Shade::Base => false,
+                                        Shade::Darker | Shade::Darkest => colourable == Skin,
+                                        _ => true,
+                                    };
+
+                                    if show_button {
+                                        let colour_part = self
+                                            .character
+                                            .character_colours
+                                            .entry(colourable)
+                                            .or_default();
+
+                                        let colour_rgba = match shade {
+                                            Shade::Light => &mut colour_part.lighter,
+                                            Shade::Normal => &mut colour_part.neutral,
+                                            Shade::Dark => &mut colour_part.darker,
+                                            Shade::Darker => &mut colour_part.darker_darker,
+                                            Shade::Darkest => &mut colour_part.darker_darker_darker,
+                                            Shade::Base => &mut colour_part.base,
+                                        };
+
+                                        let colour_c32 = to_c32(*colour_rgba);
+
+                                        ui.horizontal(|ui| {
+                                            let button = Button::new("")
+                                                .fill(colour_c32)
+                                                .stroke(Stroke::new(1.0, Color32::GRAY))
+                                                .min_size(vec2(40.0, 20.0));
+
+                                            if ui.add(button).clicked() {
+                                                *self
+                                                    .colour_picker_open_state
+                                                    .entry((colourable, shade))
+                                                    .or_insert(false) ^= true;
+                                            }
+                                        });
                                     }
-                                }
-                                if changed {
-                                    self.texture_cache.clear();
+
+                                    if self.colour_picker_open_state[&(colourable, shade)] {
+                                        self.present_colour_picker(ctx, colourable, shade);
+                                    }
                                 }
                             });
                         });
@@ -566,6 +569,11 @@ impl eframe::App for FECharacterCreator {
                                 ExportSize::Double,
                                 ExportSize::Double.display_name(),
                             );
+                            ui.selectable_value(
+                                &mut self.export_size_selection,
+                                ExportSize::ROMHack,
+                                ExportSize::ROMHack.display_name(),
+                            )
                         });
                 });
 
@@ -708,36 +716,40 @@ impl FECharacterCreator {
     }
 
     fn show_about_window(&mut self, ctx: &Context) {
+        let version = env!("CARGO_PKG_VERSION");
+
+        // Define your content as a standard Markdown string
+        let markdown_content = format!(
+            r#"
+# FE Character Creator, 4th Edition
+**Version {version}**
+
+This software comes with **ABSOLUTELY NO WARRANTY**.
+Licensed under the [GNU AGPLv3](https://www.gnu.org/licenses/agpl-3.0.html) - excluding art assets.
+
+[Source Code](https://github.com/aidan-es/FECC4e)
+
+---
+
+### Credits
+Built with [Rust](https://www.rust-lang.org/) and [egui](https://github.com/emilk/egui).
+
+This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by [TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scarla by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc).
+
+Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
+"#
+        );
+
         egui::Window::new("About")
             .open(&mut self.about_window_open)
             .collapsible(false)
-            .resizable(false)
+            .resizable(false) // CommonMarkViewer handles resizing, but fixed is fine too
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.heading("FE Character Creator, 4th Edition");
-                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                    ui.add_space(8.0);
-
-                    ui.label("This software comes with ABSOLUTELY NO WARRANTY.");
-                    ui.label("Licensed under the GNU AGPLv3 - excluding art assets.");
-
-                    ui.add_space(8.0);
-
-                    ui.hyperlink_to("Source Code", "https://github.com/aidan-es/FECC4e");
-                    ui.hyperlink_to("Full License", "https://www.gnu.org/licenses/agpl-3.0.html");
-                    ui.add_space(10.0);
-                    ui.label("Credits:");
-                    ui.hyperlink_to("Rust", "https://www.rust-lang.org/");
-                    ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-                    ui.add_space(5.0);
-                    ui.label(RichText::new(
-                        "This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by TheFlyingMinotaur, updated by BaconMaster120 and converted to Scarla by ValeTheVioletMote."
-                    ));
-                    ui.add_space(5.0);
-                    ui.label(RichText::new("Many art assets are by Iscaneus."));
-
-                });
+                // Render the Markdown
+                CommonMarkViewer::new()
+                    .max_image_width(Some(512)) // Optional: limit image width if you add logos
+                    .show(ui, &mut self.markdown_cache, &markdown_content);
             });
     }
 
@@ -848,78 +860,100 @@ impl FECharacterCreator {
         }
     }
 
-    fn present_colour_picker(&mut self, ctx: &Context, colourable: &Colourable) {
-        egui::Window::new(colourable.to_string() + " Colour")
+    fn present_colour_picker(&mut self, ctx: &Context, colourable: Colourable, shade: Shade) {
+        egui::Window::new(format!("{colourable} Colour ({shade:?})"))
             .open(
                 self.colour_picker_open_state
-                    .get_mut(colourable)
-                    .expect("Missing colourable entry in colour_picker_open_state"),
+                    .get_mut(&(colourable, shade))
+                    .expect("Missing (colourable, shade) entry in colour_picker_open_state"),
             )
             .show(ctx, |ui| {
-                ui.label("Select a new ".to_owned() + &*colourable.to_string() + " colour:");
+                ui.label(format!("Select a new {colourable} ({shade:?}) colour:"));
                 ui.spacing_mut().slider_width = 275.0;
 
                 let colour_part = self
                     .character
                     .character_colours
-                    .entry(*colourable)
+                    .entry(colourable)
                     .or_default();
 
-                let mut base_c32 = to_c32(colour_part.base);
+                let colour_rgba = match shade {
+                    Shade::Light => &mut colour_part.lighter,
+                    Shade::Normal => &mut colour_part.neutral,
+                    Shade::Dark => &mut colour_part.darker,
+                    Shade::Darker => &mut colour_part.darker_darker,
+                    Shade::Darkest => &mut colour_part.darker_darker_darker,
+                    Shade::Base => &mut colour_part.base,
+                };
+
+                let mut colour_c32 = to_c32(*colour_rgba);
+
                 let colour_changed = egui::widgets::color_picker::color_picker_color32(
                     ui,
-                    &mut base_c32,
+                    &mut colour_c32,
                     egui::color_picker::Alpha::OnlyBlend,
                 );
 
                 if colour_changed {
-                    colour_part.set(from_c32(base_c32));
-                    // derive_all_colours called inside set()
+                    let new_col = from_c32(colour_c32);
+
+                    if matches!(shade, Shade::Base) {
+                        colour_part.set(new_col);
+                    } else {
+                        *colour_rgba = new_col;
+                    }
+
                     self.texture_cache.clear();
                 }
 
-                egui::CollapsingHeader::new("Colour Palette").show(ui, |ui| {
-                    let columns = 9;
-                    let palette_colours = self.colour_palettes[colourable].colours();
-                    let rows = (palette_colours.len() as f32 / columns as f32).ceil() as usize;
-                    let available_height = ui.available_height();
-                    let table = TableBuilder::new(ui)
-                        .striped(false)
-                        .resizable(false)
-                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                        .columns(Column::auto(), columns)
-                        .min_scrolled_height(100.0)
-                        .max_scroll_height(available_height);
+                if let Some(palette) = self.colour_palettes.get(&colourable) {
+                    egui::CollapsingHeader::new("Colour Palette")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            let columns = 9;
+                            let palette_colours = palette.colours();
+                            let rows =
+                                (palette_colours.len() as f32 / columns as f32).ceil() as usize;
+                            let available_height = ui.available_height();
+                            let table = TableBuilder::new(ui)
+                                .striped(false)
+                                .resizable(false)
+                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                .columns(Column::auto(), columns)
+                                .min_scrolled_height(100.0)
+                                .max_scroll_height(available_height);
 
-                    table.body(|mut body| {
-                        for i in 0..rows {
-                            body.row(20.0, |mut row| {
-                                for ii in 0..columns {
-                                    row.col(|ui| {
-                                        if i * columns + ii < palette_colours.len() {
-                                            let colour = palette_colours[(i * columns) + ii];
-                                            if ui
-                                                .add(
-                                                    Button::new("")
-                                                        .min_size(vec2(20.0, 20.0))
-                                                        .fill(to_c32(colour)),
-                                                )
-                                                .clicked()
-                                            {
-                                                self.character
-                                                    .character_colours
-                                                    .entry(*colourable)
-                                                    .or_default()
-                                                    .set(colour);
-                                                self.texture_cache.clear();
-                                            }
+                            table.body(|mut body| {
+                                for i in 0..rows {
+                                    body.row(20.0, |mut row| {
+                                        for ii in 0..columns {
+                                            row.col(|ui| {
+                                                if i * columns + ii < palette_colours.len() {
+                                                    let colour =
+                                                        palette_colours[(i * columns) + ii];
+                                                    if ui
+                                                        .add(
+                                                            Button::new("")
+                                                                .min_size(vec2(20.0, 20.0))
+                                                                .fill(to_c32(colour)),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        self.character
+                                                            .character_colours
+                                                            .entry(colourable)
+                                                            .or_default()
+                                                            .set(colour);
+                                                        self.texture_cache.clear();
+                                                    }
+                                                }
+                                            });
                                         }
                                     });
                                 }
                             });
-                        }
-                    });
-                });
+                        });
+                }
             });
     }
 

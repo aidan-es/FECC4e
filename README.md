@@ -6,11 +6,11 @@ A cross-platform desktop and web application for creating custom character portr
 series.
 
 This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by
-TheFlyingMinotaur, updated by BaconMaster120, and converted to Scarla by ValeTheVioletMote - these being considered the
+[TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scarla by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc) - these being considered the
 1st, 2nd, and 3rd 'versions' or 'editions' respectively. I use the word 'edition' instead, in the hope of myself
 iterating with improvements and new features in future versions.
 
-Many art assets are by Iscaneus.
+Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus). 
 
 ## New Features of the 4th Edition
 
@@ -83,6 +83,12 @@ To build and run the application locally, you will need to have the Rust program
        ```bash
        trunk serve --open --release
        ```
+
+Automatic builds and tests can be run using the `cargo-make` crate and running:
+
+```bash
+cargo make check
+```
 
 ### Contributing
 
