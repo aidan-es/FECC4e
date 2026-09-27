@@ -100,8 +100,8 @@ impl FECharacterCreator {
             canvas_rect,
         );
 
-        let handle_stroke = Stroke::new(1.0, Color32::WHITE);
-        let line_stroke = Stroke::new(1.0, Color32::from_gray(190));
+        let handle_stroke = Stroke::new(1.0_f32, Color32::WHITE);
+        let line_stroke = Stroke::new(1.0_f32, Color32::from_gray(190));
         painter.line_segment([corners_abs[0], corners_abs[1]], line_stroke);
         painter.line_segment([corners_abs[1], corners_abs[2]], line_stroke);
         painter.line_segment([corners_abs[2], corners_abs[3]], line_stroke);

@@ -300,7 +300,7 @@ impl eframe::App for FECharacterCreator {
                     inner_margin: egui::Margin::same(2),
                     outer_margin: egui::Margin::same(3),
                     shadow: Default::default(),
-                    stroke: Stroke::new(1.0, Color32::GRAY),
+                    stroke: Stroke::new(1.0_f32, Color32::GRAY),
                     ..Default::default()
                 };
 
@@ -328,7 +328,7 @@ impl eframe::App for FECharacterCreator {
                             ui.horizontal(|ui| {
                                 let button = Button::new(button_text)
                                     .fill(base_colour_c32)
-                                    .stroke(Stroke::new(1.0, Color32::GRAY))
+                                    .stroke(Stroke::new(1.0_f32, Color32::GRAY))
                                     .min_size(vec2(100.0, 20.0));
 
                                 if ui.add(button).clicked() {
@@ -396,7 +396,7 @@ impl eframe::App for FECharacterCreator {
                                         ui.horizontal(|ui| {
                                             let button = Button::new("")
                                                 .fill(colour_c32)
-                                                .stroke(Stroke::new(1.0, Color32::GRAY))
+                                                .stroke(Stroke::new(1.0_f32, Color32::GRAY))
                                                 .min_size(vec2(40.0, 20.0));
 
                                             if ui.add(button).clicked() {
@@ -432,7 +432,7 @@ impl eframe::App for FECharacterCreator {
 
                     let button = Button::new(button_text)
                         .fill(outline_c32)
-                        .stroke(Stroke::new(1.0, Color32::GRAY))
+                        .stroke(Stroke::new(1.0_f32, Color32::GRAY))
                         .min_size(vec2(135.0, 20.0));
 
                     if ui.add(button).clicked() {
