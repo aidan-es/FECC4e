@@ -2,9 +2,9 @@
 use crate::FECharacterCreator;
 use crate::extensions::color32::Contrast as _;
 use crate::extensions::toggle_switch::toggle;
+use ahash::HashSet;
 use eframe::emath::vec2;
 use eframe::epaint::{Color32, Stroke};
-use egui::ahash::HashSet;
 use egui::{Button, Context, Image, RichText, Ui};
 use egui_commonmark::CommonMarkViewer;
 use egui_extras::install_image_loaders;
@@ -29,6 +29,7 @@ fn from_c32(c: Color32) -> Rgba {
 
 impl eframe::App for FECharacterCreator {
     fn ui(&mut self, whole_app_ui: &mut Ui, _frame: &mut eframe::Frame) {
+        let ctx = whole_app_ui.ctx().clone();
         {
             let mut character = self.character.clone();
             let asset_libraries = &self.asset_libraries;
@@ -102,7 +103,7 @@ impl eframe::App for FECharacterCreator {
 
         egui::Panel::top("top_toggle_bar")
             .resizable(false)
-            .show(whole_app_ui.ctx(), |ui| {
+            .show(whole_app_ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
                     let asset_panel_icon = if self.assets_panel_expanded {
                         "◀"
@@ -170,9 +171,10 @@ impl eframe::App for FECharacterCreator {
                 });
             });
 
-        egui::SidePanel::left("part_selection_panel").show_animated(
-            whole_app_ui.ctx(),
-            self.assets_panel_expanded,
+        let mut assets_panel_expanded = self.assets_panel_expanded;
+        egui::Panel::left("part_selection_panel").show_collapsible(
+            whole_app_ui,
+            &mut assets_panel_expanded,
             |ui| {
                 ui.heading("Character Parts");
                 ui.separator();
@@ -267,29 +269,27 @@ impl eframe::App for FECharacterCreator {
                     let asset_type = self.active_tab;
 
                     if let Some(library) = self.asset_libraries.get(&asset_type)
-                        && let Some(asset) = self.display_assets(
-                            whole_app_ui.ctx(),
-                            ui,
-                            &library.clone(),
-                            &search_query_cleaned,
-                        )
+                        && let Some(asset) =
+                            self.display_assets(&ctx, ui, &library.clone(), &search_query_cleaned)
                     {
                         self.select_asset(&asset.clone(), asset_type);
                     }
                 });
             },
         );
+        self.assets_panel_expanded = assets_panel_expanded;
 
         #[cfg(target_arch = "wasm32")]
         self.add_art_window(whole_app_ui.ctx());
 
         self.show_about_window(whole_app_ui.ctx());
 
-        egui::SidePanel::right("colour_selection")
-            .default_width(0.0)
-            .show_animated(whole_app_ui.ctx(), self.colour_panel_expanded, |ui| {
+        let mut colour_panel_expanded = self.colour_panel_expanded;
+        egui::Panel::right("colour_selection")
+            .default_size(0.0)
+            .show_collapsible(whole_app_ui, &mut colour_panel_expanded, |ui| {
                 self.update_stored_colour_palettes();
-                self.update_stored_asset_libraries(whole_app_ui.ctx(), ui);
+                self.update_stored_asset_libraries(&ctx, ui);
                 self.update_stored_image_data_cache();
 
                 ui.add_space(5.0);
@@ -541,10 +541,12 @@ impl eframe::App for FECharacterCreator {
                     ui.label("Made with love and cats.");
                 });
             });
+        self.colour_panel_expanded = colour_panel_expanded;
 
-        egui::Panel::bottom("export").show_animated(
-            whole_app_ui.ctx(),
-            self.export_panel_expanded,
+        let mut export_panel_expanded = self.export_panel_expanded;
+        egui::Panel::bottom("export").show_collapsible(
+            whole_app_ui,
+            &mut export_panel_expanded,
             |ui| {
                 ui.heading("Export");
 
@@ -636,10 +638,12 @@ impl eframe::App for FECharacterCreator {
                 }
             },
         );
+        self.export_panel_expanded = export_panel_expanded;
 
-        egui::Panel::bottom("save_load").show_animated(
-            whole_app_ui.ctx(),
-            self.save_load_panel_expanded,
+        let mut save_load_panel_expanded = self.save_load_panel_expanded;
+        egui::Panel::bottom("save_load").show_collapsible(
+            whole_app_ui,
+            &mut save_load_panel_expanded,
             |ui| {
                 ui.heading("Save / Load");
                 ui.horizontal(|ui| {
@@ -658,14 +662,15 @@ impl eframe::App for FECharacterCreator {
                 }
             },
         );
+        self.save_load_panel_expanded = save_load_panel_expanded;
 
-        egui::CentralPanel::default().show(whole_app_ui.ctx(), |ui| {
-            self.update_rect(whole_app_ui.ctx(), ui);
+        egui::CentralPanel::default().show(whole_app_ui, |ui| {
+            self.update_rect(&ctx, ui);
         });
 
         self.new_active_tab = false;
         self.randomise_used = false;
-        self.toasts.show(whole_app_ui.ctx());
+        self.toasts.show(&ctx);
         #[cfg(target_arch = "wasm32")]
         {
             self.add_art_error = None;

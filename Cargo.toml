@@ -17,11 +17,11 @@ opt-level = 2
 
 [workspace.dependencies]
 csv = "1.4.0"
-eframe = "0.34.3"
-egui = "0.34.3"
-egui-notify = "0.22.0"
-egui_commonmark = "0.23.0"
-egui_extras = "0.34.3"
+eframe = "0.36.2"
+egui = "0.36.2"
+egui-notify = "0.23.0"
+egui_commonmark = "0.25.0"
+egui_extras = "0.36.2"
 fecc_core = { path = "fecc_core" }
 futures-channel = "0.3.34"
 futures-util = "0.3.34"
@@ -39,6 +39,7 @@ serde_json = "1.0.151"
 simple_logger = "5.2.0"
 strum = "0.28.0"
 strum_macros = "0.28.0"
+ahash = "0.8.12"
 # Mixed:
 tokio = { version = "1.53.1" }
 wasm-bindgen-futures = "0.4.79"
@@ -52,6 +53,7 @@ web-sys = "0.3.106"
 js-sys = "0.3.106"
 serde-wasm-bindgen = "0.6.5"
 getrandom = { version = "0.4.3" }
+getrandom_03 = { package = "getrandom", version = "0.3.4" } #Requied to enable wasm_js for the older getrandom still used by ahash
 
 [workspace.lints.rust]
 unsafe_code = "deny"

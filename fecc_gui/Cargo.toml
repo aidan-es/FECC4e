@@ -35,6 +35,7 @@ egui-notify = { workspace = true }
 egui_commonmark = { workspace = true }
 pulldown-cmark = { workspace = true } # For building HTML pages
 itertools = { workspace = true }
+ahash = { workspace = true }
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -51,6 +52,7 @@ web-sys = { workspace = true }
 js-sys = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
 getrandom = { workspace = true, features = ["wasm_js"] }
+getrandom_03 = { workspace = true, features = ["wasm_js"] } #Requied to enable wasm_js for the older getrandom still used by ahash
 
 
 [build-dependencies]

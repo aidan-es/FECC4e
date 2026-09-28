@@ -9,7 +9,7 @@ use fecc_core::export::ExportSize;
 use fecc_core::file_io::{load_asset_libraries, load_colours_from_csv, load_image_bytes};
 use fecc_core::types::Point;
 
-use egui::ahash::{HashMap, HashSet};
+use ahash::{HashMap, HashSet};
 use egui::{Align, Color32, ColorImage, Context, Pos2, Rect, Shape, Ui, Vec2, pos2, vec2};
 use egui_commonmark::CommonMarkCache;
 use egui_notify::{Anchor, Toasts};
