@@ -17,11 +17,11 @@ opt-level = 2
 
 [workspace.dependencies]
 csv = "1.4.0"
-eframe = "0.33.3"
-egui = "0.33.3"
-egui-notify = "0.21.0"
-egui_commonmark = "0.22.0"
-egui_extras = "0.33.3"
+eframe = "0.34.3"
+egui = "0.34.3"
+egui-notify = "0.22.0"
+egui_commonmark = "0.23.0"
+egui_extras = "0.34.3"
 fecc_core = { path = "fecc_core" }
 futures-channel = "0.3.34"
 futures-util = "0.3.34"

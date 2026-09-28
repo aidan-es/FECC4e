@@ -1,7 +1,7 @@
-use crate::extensions::color32::Contrast as _;
-use crate::extensions::toggle_switch::toggle;
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
 use crate::FECharacterCreator;
+use crate::extensions::color32::Contrast as _;
+use crate::extensions::toggle_switch::toggle;
 use eframe::emath::vec2;
 use eframe::epaint::{Color32, Stroke};
 use egui::ahash::HashSet;
@@ -28,7 +28,7 @@ fn from_c32(c: Color32) -> Rgba {
 }
 
 impl eframe::App for FECharacterCreator {
-    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, whole_app_ui: &mut Ui, _frame: &mut eframe::Frame) {
         {
             let mut character = self.character.clone();
             let asset_libraries = &self.asset_libraries;
@@ -100,9 +100,9 @@ impl eframe::App for FECharacterCreator {
             self.loaded_character_receiver = Some(rx);
         }
 
-        egui::TopBottomPanel::top("top_toggle_bar")
+        egui::Panel::top("top_toggle_bar")
             .resizable(false)
-            .show(ctx, |ui| {
+            .show(whole_app_ui.ctx(), |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
                     let asset_panel_icon = if self.assets_panel_expanded {
                         "◀"
@@ -171,7 +171,7 @@ impl eframe::App for FECharacterCreator {
             });
 
         egui::SidePanel::left("part_selection_panel").show_animated(
-            ctx,
+            whole_app_ui.ctx(),
             self.assets_panel_expanded,
             |ui| {
                 ui.heading("Character Parts");
@@ -267,8 +267,12 @@ impl eframe::App for FECharacterCreator {
                     let asset_type = self.active_tab;
 
                     if let Some(library) = self.asset_libraries.get(&asset_type)
-                        && let Some(asset) =
-                            self.display_assets(ctx, ui, &library.clone(), &search_query_cleaned)
+                        && let Some(asset) = self.display_assets(
+                            whole_app_ui.ctx(),
+                            ui,
+                            &library.clone(),
+                            &search_query_cleaned,
+                        )
                     {
                         self.select_asset(&asset.clone(), asset_type);
                     }
@@ -277,15 +281,15 @@ impl eframe::App for FECharacterCreator {
         );
 
         #[cfg(target_arch = "wasm32")]
-        self.add_art_window(ctx);
+        self.add_art_window(whole_app_ui.ctx());
 
-        self.show_about_window(ctx);
+        self.show_about_window(whole_app_ui.ctx());
 
         egui::SidePanel::right("colour_selection")
             .default_width(0.0)
-            .show_animated(ctx, self.colour_panel_expanded, |ui| {
+            .show_animated(whole_app_ui.ctx(), self.colour_panel_expanded, |ui| {
                 self.update_stored_colour_palettes();
-                self.update_stored_asset_libraries(ctx, ui);
+                self.update_stored_asset_libraries(whole_app_ui.ctx(), ui);
                 self.update_stored_image_data_cache();
 
                 ui.add_space(5.0);
@@ -339,7 +343,7 @@ impl eframe::App for FECharacterCreator {
                                 }
 
                                 if self.colour_palettes.contains_key(&colourable) {
-                                    install_image_loaders(ctx);
+                                    install_image_loaders(ui.ctx());
                                     let cycle_colours_symbol = Image::new(egui::include_image!(
                                         "../../../assets/coins-swap.svg"
                                     ));
@@ -409,7 +413,7 @@ impl eframe::App for FECharacterCreator {
                                     }
 
                                     if self.colour_picker_open_state[&(colourable, shade)] {
-                                        self.present_colour_picker(ctx, colourable, shade);
+                                        self.present_colour_picker(ui.ctx(), colourable, shade);
                                     }
                                 }
                             });
@@ -445,7 +449,7 @@ impl eframe::App for FECharacterCreator {
                                 .get_mut(&self.active_tab)
                                 .expect("Missing active_tab entry in outline_picker_open_state"),
                         )
-                        .show(ctx, |ui| {
+                        .show(ui.ctx(), |ui| {
                             ui.label(
                                 "Select a new ".to_owned()
                                     + &*self.active_tab.to_string()
@@ -538,8 +542,8 @@ impl eframe::App for FECharacterCreator {
                 });
             });
 
-        egui::TopBottomPanel::bottom("export").show_animated(
-            ctx,
+        egui::Panel::bottom("export").show_animated(
+            whole_app_ui.ctx(),
             self.export_panel_expanded,
             |ui| {
                 ui.heading("Export");
@@ -633,8 +637,8 @@ impl eframe::App for FECharacterCreator {
             },
         );
 
-        egui::TopBottomPanel::bottom("save_load").show_animated(
-            ctx,
+        egui::Panel::bottom("save_load").show_animated(
+            whole_app_ui.ctx(),
             self.save_load_panel_expanded,
             |ui| {
                 ui.heading("Save / Load");
@@ -655,13 +659,13 @@ impl eframe::App for FECharacterCreator {
             },
         );
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.update_rect(ctx, ui);
+        egui::CentralPanel::default().show(whole_app_ui.ctx(), |ui| {
+            self.update_rect(whole_app_ui.ctx(), ui);
         });
 
         self.new_active_tab = false;
         self.randomise_used = false;
-        self.toasts.show(ctx);
+        self.toasts.show(whole_app_ui.ctx());
         #[cfg(target_arch = "wasm32")]
         {
             self.add_art_error = None;
