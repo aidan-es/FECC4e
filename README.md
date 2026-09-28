@@ -74,15 +74,21 @@ To build and run the application locally, you will need to have the Rust program
     cargo install trunk
     ```
 
-3  **Build and run:**
--    **Native:**
-        ```bash
-        cargo run --release
-        ```
--   **Web:**
-       ```bash
-       trunk serve --open --release
-       ```
+3. **Build and run:**
+
+- **Native:**
+  ```bash
+  cargo run --release
+  ```
+- **Web (via `cargo-make` from root):**
+  ```bash
+  cargo make serve
+  ```
+- **Web (direct Trunk CLI):**
+  ```bash
+  cd fecc_gui
+  trunk serve --open --release
+  ```
 
 Automatic builds and tests can be run using the `cargo-make` crate and running:
 

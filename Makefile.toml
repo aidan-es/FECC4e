@@ -47,7 +47,7 @@ args = ["test", "--quiet", "--workspace", "--doc"]
 
 [tasks.typos]
 description = "Checks for typos"
-install_crate = "typos-cli"
+install_crate = { crate_name = "typos-cli", binary = "typos", test_arg = "--help", version = "1.50.3" }
 command = "typos"
 
 [tasks.build-trunk]
@@ -55,6 +55,13 @@ description = "Builds the Trunk (WASM) project"
 cwd = "fecc_gui"
 command = "trunk"
 args = ["build"]
+
+[tasks.serve]
+description = "Serves the Trunk (WASM) project locally"
+cwd = "fecc_gui"
+command = "trunk"
+args = ["serve", "--open", "--release"]
+
 
 [tasks.post-check-message]
 description = "Prints a success message"

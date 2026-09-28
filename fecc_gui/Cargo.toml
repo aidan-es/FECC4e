@@ -3,6 +3,8 @@ name = "fe_character_creator"
 version = "0.2.0"
 authors = ["aidan-es"]
 edition = "2024"
+default-run = "fe_character_creator"
+
 
 [[bin]]
 name = "fe_character_creator"
