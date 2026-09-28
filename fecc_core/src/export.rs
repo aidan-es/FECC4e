@@ -113,7 +113,7 @@ pub fn export_character(
                 &scaled_image,
                 part.rotation,
                 Interpolation::Nearest,
-                Rgba([0, 0, 0, 0]),
+                imageproc::geometric_transformations::Border::Constant(Rgba([0, 0, 0, 0])),
             );
 
             let target_centre_on_output_x = part.position.x * export_scale;

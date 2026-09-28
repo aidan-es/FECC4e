@@ -11,9 +11,47 @@ opt-level = "z"
 lto = true         # Enable Link Time Optimization
 codegen-units = 1  # Reduce opportunities for parallelism in exchange for better optimisation
 
-# Optimize all dependencies even in debug builds:
+# Optimise all dependencies even in debug builds:
 [profile.dev.package."*"]
 opt-level = 2
+
+[workspace.dependencies]
+csv = "1.4.0"
+eframe = "0.33.3"
+egui = "0.33.3"
+egui-notify = "0.21.0"
+egui_commonmark = "0.22.0"
+egui_extras = "0.33.3"
+fecc_core = { path = "fecc_core" }
+futures-channel = "0.3.34"
+futures-util = "0.3.34"
+glob = "0.3.4"
+image = { version = "0.25.10", default-features = false }
+imageproc = { version = "0.27.0", default-features = false }
+indexmap = "2.14.2"
+itertools = "0.15.0"
+log = "0.4.34"
+pulldown-cmark = "0.13.4"
+rand = "0.10.3"
+rfd = "0.17.2"
+serde = "1.0.229"
+serde_json = "1.0.151"
+simple_logger = "5.2.0"
+strum = "0.28.0"
+strum_macros = "0.28.0"
+# Mixed:
+tokio = { version = "1.53.1" }
+wasm-bindgen-futures = "0.4.79"
+# Native Only:
+chrono = "0.4.45"
+fern = "0.7.1"
+dirs-next = "2.0.0"
+# Web Only:
+wasm-bindgen = "0.2.129"
+web-sys = "0.3.106"
+js-sys = "0.3.106"
+serde-wasm-bindgen = "0.6.5"
+getrandom = { version = "0.4.3" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
@@ -177,3 +215,4 @@ verbose_file_reads = "warn"
 wildcard_dependencies = "warn"
 wildcard_imports = "warn"
 zero_sized_map_values = "warn"
+
