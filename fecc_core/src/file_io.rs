@@ -49,7 +49,7 @@ pub async fn load_asset_libraries()
             serde_wasm_bindgen::from_value(asset_list_val).map_err(|e| e.to_string())?;
 
         for filename in files {
-            let path = std::path::PathBuf::from(format!("art/{}", filename));
+            let path = PathBuf::from(format!("art/{}", filename));
             add_asset_to_library(&mut asset_libraries, &path);
         }
     }

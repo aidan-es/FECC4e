@@ -63,7 +63,7 @@ function animate() {
         particles[i].update();
         particles[i].draw();
 
-        // Remove particles that are off screen
+        // Remove particles that are off-screen
         if (particles[i].y > canvas.height) {
             particles.splice(i, 1);
         }

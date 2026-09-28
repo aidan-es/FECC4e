@@ -879,7 +879,7 @@ impl FECharacterCreator {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl FECharacterCreator {
-    fn save_image(image: &image::RgbaImage, filename_stem: String) {
+    fn save_image(image: &RgbaImage, filename_stem: String) {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("PNG Image", &["png"])
             .set_file_name(&filename_stem)

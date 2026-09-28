@@ -22,9 +22,9 @@ Face.png', '_Hair.png', '_HairBack.png', '_Armour.png' or '_Accessory.png' respe
 
 The colouring system is rather esoteric, but must be followed for compatibility with all the existing artwork. RGB
 colours consist of a red, green and blue channel, only the red channel is considered by FEEC4e when reading art files.
-The values you set for green and blue are imaterial.
+The values you set for green and blue are immaterial.
 
-Differing red values are used to differeniate different parts of the art that should be coloured differently. Red values
+Differing red values are used to differentiate parts of the art that should be coloured differently. Red values
 are divided by 10 and then compared to the bellow keys (so multiply these key values by 10 to get the red values you
 should use in your art).
 

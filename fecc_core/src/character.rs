@@ -356,7 +356,6 @@ mod tests {
 
         assert_eq!(colours.base, new_base);
         assert_ne!(colours.base, initial_base);
-        // Verify derived colors updated
         assert_ne!(colours.lighter, initial_base.brighter());
         assert_eq!(colours.lighter, new_base.brighter());
     }

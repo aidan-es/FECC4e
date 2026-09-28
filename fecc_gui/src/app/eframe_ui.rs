@@ -59,7 +59,7 @@ impl eframe::App for FECharacterCreator {
 
         #[cfg(target_arch = "wasm32")]
         if let Some(mut rx) = self.new_user_asset_receiver.take() {
-            if let Ok(Some(result)) = rx.try_next() {
+            if let Ok(result) = rx.try_recv() {
                 match result {
                     Ok(asset) => {
                         self.asset_libraries
@@ -743,7 +743,7 @@ Licensed under the [GNU AGPLv3](https://www.gnu.org/licenses/agpl-3.0.html) - ex
 ### Credits
 Built with [Rust](https://www.rust-lang.org/) and [egui](https://github.com/emilk/egui).
 
-This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by [TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scarla by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc).
+This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by [TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scala by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc).
 
 Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
 "#
