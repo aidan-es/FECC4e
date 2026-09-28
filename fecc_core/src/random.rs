@@ -14,13 +14,18 @@ pub fn randomize_assets(
     canvas_size: Point,
 ) {
     let mut rng = rand::rng();
-    let scale = (canvas_size.y / 96.0).floor().max(1.0);
     let center = Point::new(canvas_size.x / 2.0, canvas_size.y / 2.0);
 
     for &asset_type in types_to_randomize {
         if let Some(library) = asset_libraries.get(&asset_type)
             && let Some((_, random_asset)) = library.iter().choose(&mut rng)
         {
+            let base_height = if asset_type == AssetType::Token {
+                64.0
+            } else {
+                96.0
+            };
+            let scale = (canvas_size.y / base_height).floor().max(1.0);
             let mut position = center;
 
             // Special case for Armour positioning (aligned to bottom)
@@ -164,5 +169,33 @@ mod tests {
             character.hair_back.as_ref().unwrap().asset.id,
             hair_back_asset.id
         );
+    }
+
+    #[test]
+    fn test_randomize_assets_token_scale() {
+        let mut character = Character::default();
+        let mut libraries = HashMap::new();
+
+        let mut token_assets = IndexMap::new();
+        let token_asset = Asset::new(
+            "Token1".to_string(),
+            std::path::PathBuf::new(),
+            None,
+            AssetType::Token,
+        );
+        token_assets.insert(token_asset.id.clone(), token_asset.clone());
+        libraries.insert(AssetType::Token, token_assets);
+
+        let types_to_randomize = vec![AssetType::Token];
+        // Canvas height 128: 128 / 64 = 2.0 scale (for 96 it would have been 1.0)
+        let canvas_size = Point::new(128.0, 128.0);
+
+        randomize_assets(&mut character, &libraries, &types_to_randomize, canvas_size);
+
+        assert!(character.token.is_some());
+        let part = character.token.as_ref().unwrap();
+        assert_eq!(part.asset.id, token_asset.id);
+        assert_eq!(part.scale, 2.0);
+        assert_eq!(part.position, Point::new(64.0, 64.0));
     }
 }

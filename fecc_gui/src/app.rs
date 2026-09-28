@@ -64,7 +64,8 @@ pub enum Orientation {
 
 #[derive(Debug, Clone, Copy)]
 pub struct FitResult {
-    pub max_side: f32,
+    pub portrait_size: Vec2,
+    pub token_size: Vec2,
     pub orientation: Orientation,
 }
 
@@ -90,6 +91,10 @@ pub struct FECharacterCreator {
     token_rect: Rect,
 
     export_size_selection: ExportSize,
+    custom_portrait_width: u32,
+    custom_portrait_height: u32,
+    custom_token_width: u32,
+    custom_token_height: u32,
 
     #[serde(skip)]
     colour_palettes: std::collections::HashMap<Colourable, ColourPalette>,
@@ -194,6 +199,10 @@ impl Default for FECharacterCreator {
             portrait_rect: Rect::NOTHING,
             token_rect: Rect::NOTHING,
             export_size_selection: ExportSize::Original,
+            custom_portrait_width: 96,
+            custom_portrait_height: 96,
+            custom_token_width: 64,
+            custom_token_height: 64,
             colour_palettes: Default::default(),
             palettes_receiver: None,
             asset_libraries_receiver: None,
@@ -248,6 +257,13 @@ impl FECharacterCreator {
         } else {
             Default::default()
         };
+
+        if let ExportSize::Custom { portrait, token } = fe_character_creator.export_size_selection {
+            fe_character_creator.custom_portrait_width = portrait.0;
+            fe_character_creator.custom_portrait_height = portrait.1;
+            fe_character_creator.custom_token_width = token.0;
+            fe_character_creator.custom_token_height = token.1;
+        }
 
         #[cfg(not(target_arch = "wasm32"))]
         let tokio_runtime = fe_character_creator.tokio_runtime.clone();
@@ -590,7 +606,13 @@ impl FECharacterCreator {
         )
     }
 
-    fn scale_character_parts(&mut self, scale_factor: f32, is_token: bool) {
+    fn scale_character_parts(
+        &mut self,
+        old_center: Point,
+        new_center: Point,
+        scale_factor: f32,
+        is_token: bool,
+    ) {
         let asset_types_to_scale = if is_token {
             vec![AssetType::Token]
         } else {
@@ -605,8 +627,10 @@ impl FECharacterCreator {
 
         for asset_type in asset_types_to_scale {
             if let Some(mut part) = self.character.get_character_part(&asset_type) {
-                part.position.x *= scale_factor;
-                part.position.y *= scale_factor;
+                let offset_x = (part.position.x - old_center.x) * scale_factor;
+                let offset_y = (part.position.y - old_center.y) * scale_factor;
+                part.position.x = new_center.x + offset_x;
+                part.position.y = new_center.y + offset_y;
                 part.scale *= scale_factor;
                 self.character.set_character_part(&asset_type, part);
             }
@@ -658,20 +682,18 @@ impl FECharacterCreator {
         );
         let available_size = ui.available_size_before_wrap();
 
-        let fit_result = find_max_square_side(
-            available_size.x,
-            available_size.y,
-            grid_spacing.x,
-            grid_spacing.y,
-        );
+        let (pw, ph) = self.export_size_selection.portrait();
+        let (tw, th) = self.export_size_selection.token();
+        let aspect_p = pw as f32 / ph.max(1) as f32;
+        let aspect_t = tw as f32 / th.max(1) as f32;
 
-        let canvas_size = Vec2::splat(fit_result.max_side);
+        let fit_result = find_max_canvas_sizes(available_size, grid_spacing, aspect_p, aspect_t);
 
         egui::Grid::new("canvas_grid").show(ui, |ui| {
             let _portrait_rect = egui::Frame::canvas(ui.style())
                 .inner_margin(0.0)
                 .show(ui, |ui| {
-                    self.paint_canvas(ctx, ui, CanvasType::Portrait, canvas_size)
+                    self.paint_canvas(ctx, ui, CanvasType::Portrait, fit_result.portrait_size)
                 })
                 .inner;
 
@@ -682,7 +704,7 @@ impl FECharacterCreator {
             let token_rect = egui::Frame::canvas(ui.style())
                 .inner_margin(0.0)
                 .show(ui, |ui| {
-                    self.paint_canvas(ctx, ui, CanvasType::Token, canvas_size)
+                    self.paint_canvas(ctx, ui, CanvasType::Token, fit_result.token_size)
                 })
                 .inner;
 
@@ -726,16 +748,49 @@ impl FECharacterCreator {
         }
 
         if old_portrait_rect.width() > 0.0
-            && (old_portrait_rect.width() - self.portrait_rect.width()).abs() > 1.0
+            && ((old_portrait_rect.width() - self.portrait_rect.width()).abs() > 1.0
+                || (old_portrait_rect.height() - self.portrait_rect.height()).abs() > 1.0)
         {
-            let scale_factor = self.portrait_rect.width() / old_portrait_rect.width();
-            self.scale_character_parts(scale_factor, false);
+            let scale_factor =
+                if (old_portrait_rect.width() - self.portrait_rect.width()).abs() > 1.0 {
+                    self.portrait_rect.width() / old_portrait_rect.width()
+                } else if old_portrait_rect.height() > 0.0
+                    && (old_portrait_rect.height() - self.portrait_rect.height()).abs() > 1.0
+                {
+                    self.portrait_rect.height() / old_portrait_rect.height()
+                } else {
+                    1.0
+                };
+            let old_center = Point::new(
+                old_portrait_rect.width() / 2.0,
+                old_portrait_rect.height() / 2.0,
+            );
+            let new_center = Point::new(
+                self.portrait_rect.width() / 2.0,
+                self.portrait_rect.height() / 2.0,
+            );
+            self.scale_character_parts(old_center, new_center, scale_factor, false);
         }
         if old_token_rect.width() > 0.0
-            && (old_token_rect.width() - self.token_rect.width()).abs() > 1.0
+            && ((old_token_rect.width() - self.token_rect.width()).abs() > 1.0
+                || (old_token_rect.height() - self.token_rect.height()).abs() > 1.0)
         {
-            let scale_factor = self.token_rect.width() / old_token_rect.width();
-            self.scale_character_parts(scale_factor, true);
+            let scale_factor = if (old_token_rect.width() - self.token_rect.width()).abs() > 1.0 {
+                self.token_rect.width() / old_token_rect.width()
+            } else if old_token_rect.height() > 0.0
+                && (old_token_rect.height() - self.token_rect.height()).abs() > 1.0
+            {
+                self.token_rect.height() / old_token_rect.height()
+            } else {
+                1.0
+            };
+            let old_center =
+                Point::new(old_token_rect.width() / 2.0, old_token_rect.height() / 2.0);
+            let new_center = Point::new(
+                self.token_rect.width() / 2.0,
+                self.token_rect.height() / 2.0,
+            );
+            self.scale_character_parts(old_center, new_center, scale_factor, true);
         }
     }
 
@@ -749,10 +804,15 @@ impl FECharacterCreator {
         let (response, painter) = ui.allocate_painter(canvas_size, egui::Sense::click_and_drag());
         let available_rect = response.rect;
 
-        let side = available_rect.width().min(available_rect.height());
-        let canvas_rect = Rect::from_center_size(available_rect.center(), Vec2::splat(side));
+        let canvas_rect = Rect::from_center_size(available_rect.center(), canvas_size);
 
         painter.rect_filled(canvas_rect, 0.0, ui.style().visuals.extreme_bg_color);
+        painter.rect_stroke(
+            canvas_rect,
+            0.0,
+            ui.style().visuals.widgets.noninteractive.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
 
         let parts_to_draw = if canvas_type == CanvasType::Token {
             vec![AssetType::Token]
@@ -768,11 +828,14 @@ impl FECharacterCreator {
 
         self.handle_multi_touch(ctx);
 
+        let canvas_painter = painter.with_clip_rect(canvas_rect);
+
         for &part_type in &parts_to_draw {
             if let Some(part) = self.character.get_character_part(&part_type)
                 && let Some(texture) = self.get_or_load_texture(ctx, &part.asset)
             {
-                let rect = Self::paint_transformed_part(&painter, &part, &texture, canvas_rect);
+                let rect =
+                    Self::paint_transformed_part(&canvas_painter, &part, &texture, canvas_rect);
 
                 if self.selected_part == Some(part_type) && part_type != AssetType::HairBack {
                     self.draw_interaction_handles(ui, rect, &part, response.rect, ctx);
@@ -976,22 +1039,89 @@ impl FECharacterCreator {
     }
 }
 
-fn find_max_square_side(x: f32, y: f32, padding_x: f32, padding_y: f32) -> FitResult {
-    let s_h = ((x - padding_x) / 2.0).min(y);
-    let s_v = x.min((y - padding_y) / 2.0);
+fn find_max_canvas_sizes(
+    available_space: Vec2,
+    padding: Vec2,
+    aspect_portrait: f32,
+    aspect_token: f32,
+) -> FitResult {
+    let aspect_p = aspect_portrait.max(0.01);
+    let aspect_t = aspect_token.max(0.01);
 
-    let s_h = s_h.max(0.0);
-    let s_v = s_v.max(0.0);
+    // Horizontal - matching heights
+    let h_horiz = ((available_space.x - padding.x).max(0.0) / (aspect_p + aspect_t))
+        .min(available_space.y)
+        .max(10.0);
+    let p_size_h = vec2(h_horiz * aspect_p, h_horiz);
+    let t_size_h = vec2(h_horiz * aspect_t, h_horiz);
+    let area_h = p_size_h.x * p_size_h.y + t_size_h.x * t_size_h.y;
 
-    if s_h >= s_v {
+    // Vertical - matching widths
+    let w_vert = available_space
+        .x
+        .min((available_space.y - padding.y).max(0.0) / ((1.0 / aspect_p) + (1.0 / aspect_t)))
+        .max(10.0);
+    let p_size_v = vec2(w_vert, w_vert / aspect_p);
+    let t_size_v = vec2(w_vert, w_vert / aspect_t);
+    let area_v = p_size_v.x * p_size_v.y + t_size_v.x * t_size_v.y;
+
+    if area_h >= area_v {
         FitResult {
-            max_side: s_h,
+            portrait_size: p_size_h,
+            token_size: t_size_h,
             orientation: Orientation::Horizontal,
         }
     } else {
         FitResult {
-            max_side: s_v,
+            portrait_size: p_size_v,
+            token_size: t_size_v,
             orientation: Orientation::Vertical,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_max_canvas_sizes_square() {
+        let avail = vec2(800.0, 300.0);
+        let padding = vec2(10.0, 10.0);
+        let res = find_max_canvas_sizes(avail, padding, 1.0, 1.0);
+
+        assert_eq!(res.orientation, Orientation::Horizontal);
+        assert!((res.portrait_size.x - 300.0).abs() < 1e-4);
+        assert!((res.portrait_size.y - 300.0).abs() < 1e-4);
+        assert!((res.token_size.x - 300.0).abs() < 1e-4);
+        assert!((res.token_size.y - 300.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_find_max_canvas_sizes_vertical() {
+        let avail = vec2(300.0, 800.0);
+        let padding = vec2(10.0, 10.0);
+        let res = find_max_canvas_sizes(avail, padding, 1.0, 1.0);
+
+        assert_eq!(res.orientation, Orientation::Vertical);
+        assert!((res.portrait_size.x - 300.0).abs() < 1e-4);
+        assert!((res.portrait_size.y - 300.0).abs() < 1e-4);
+        assert!((res.token_size.x - 300.0).abs() < 1e-4);
+        assert!((res.token_size.y - 300.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_find_max_canvas_sizes_romhack_aspect_ratio() {
+        let avail = vec2(1000.0, 500.0);
+        let padding = vec2(10.0, 10.0);
+        let aspect_p = 96.0 / 80.0;
+        let aspect_t = 1.0;
+        let res = find_max_canvas_sizes(avail, padding, aspect_p, aspect_t);
+
+        let actual_aspect_p = res.portrait_size.x / res.portrait_size.y;
+        let actual_aspect_t = res.token_size.x / res.token_size.y;
+
+        assert!((actual_aspect_p - aspect_p).abs() < 1e-4);
+        assert!((actual_aspect_t - aspect_t).abs() < 1e-4);
     }
 }

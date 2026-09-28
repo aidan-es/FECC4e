@@ -192,21 +192,45 @@ impl eframe::App for FECharacterCreator {
                     if ui.add(Button::new("Randomise")).clicked() {
                         self.randomise_used = true;
 
-                        let types_to_randomize: Vec<AssetType> =
-                            AssetType::get_selectable_part_types()
-                                .filter(|asset_type| asset_type != &AssetType::Accessory)
-                                .collect();
+                        let portrait_types: Vec<AssetType> = AssetType::get_selectable_part_types()
+                            .filter(|asset_type| {
+                                asset_type != &AssetType::Accessory
+                                    && asset_type != &AssetType::Token
+                            })
+                            .collect();
 
-                        let canvas_size = fecc_core::types::Point::new(
-                            self.portrait_rect.width(),
-                            self.portrait_rect.height(),
-                        );
+                        let portrait_canvas_size = if self.portrait_rect.width() > 0.0 {
+                            fecc_core::types::Point::new(
+                                self.portrait_rect.width(),
+                                self.portrait_rect.height(),
+                            )
+                        } else {
+                            let (pw, ph) = self.export_size_selection.portrait();
+                            fecc_core::types::Point::new(pw as f32, ph as f32)
+                        };
 
                         randomize_assets(
                             &mut self.character,
                             &self.asset_libraries,
-                            &types_to_randomize,
-                            canvas_size,
+                            &portrait_types,
+                            portrait_canvas_size,
+                        );
+
+                        let token_canvas_size = if self.token_rect.width() > 0.0 {
+                            fecc_core::types::Point::new(
+                                self.token_rect.width(),
+                                self.token_rect.height(),
+                            )
+                        } else {
+                            let (tw, th) = self.export_size_selection.token();
+                            fecc_core::types::Point::new(tw as f32, th as f32)
+                        };
+
+                        randomize_assets(
+                            &mut self.character,
+                            &self.asset_libraries,
+                            &[AssetType::Token],
+                            token_canvas_size,
                         );
 
                         if self.randomise_colours_too {
@@ -245,15 +269,23 @@ impl eframe::App for FECharacterCreator {
                     self.randomise_used = true;
                     let asset_type = self.active_tab;
                     let canvas_size = if asset_type == AssetType::Token {
-                        fecc_core::types::Point::new(
-                            self.token_rect.width(),
-                            self.token_rect.height(),
-                        )
-                    } else {
+                        if self.token_rect.width() > 0.0 {
+                            fecc_core::types::Point::new(
+                                self.token_rect.width(),
+                                self.token_rect.height(),
+                            )
+                        } else {
+                            let (tw, th) = self.export_size_selection.token();
+                            fecc_core::types::Point::new(tw as f32, th as f32)
+                        }
+                    } else if self.portrait_rect.width() > 0.0 {
                         fecc_core::types::Point::new(
                             self.portrait_rect.width(),
                             self.portrait_rect.height(),
                         )
+                    } else {
+                        let (pw, ph) = self.export_size_selection.portrait();
+                        fecc_core::types::Point::new(pw as f32, ph as f32)
                     };
 
                     randomize_assets(
@@ -579,9 +611,65 @@ impl eframe::App for FECharacterCreator {
                                 &mut self.export_size_selection,
                                 ExportSize::ROMHack,
                                 ExportSize::ROMHack.display_name(),
-                            )
+                            );
+                            let is_custom =
+                                matches!(self.export_size_selection, ExportSize::Custom { .. });
+                            let custom_val = ExportSize::Custom {
+                                portrait: (self.custom_portrait_width, self.custom_portrait_height),
+                                token: (self.custom_token_width, self.custom_token_height),
+                            };
+                            if ui
+                                .selectable_label(is_custom, custom_val.display_name())
+                                .clicked()
+                            {
+                                self.export_size_selection = custom_val;
+                            }
                         });
                 });
+
+                if matches!(self.export_size_selection, ExportSize::Custom { .. }) {
+                    let mut changed = false;
+                    ui.horizontal(|ui| {
+                        ui.label("Portrait Size:");
+                        ui.label("W:");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.custom_portrait_width)
+                                    .range(1..=4096),
+                            )
+                            .changed();
+                        ui.label("H:");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.custom_portrait_height)
+                                    .range(1..=4096),
+                            )
+                            .changed();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Token Size:");
+                        ui.label("W:");
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut self.custom_token_width).range(1..=4096))
+                            .changed();
+                        ui.label("H:");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.custom_token_height).range(1..=4096),
+                            )
+                            .changed();
+                    });
+                    if changed {
+                        self.custom_portrait_width = self.custom_portrait_width.clamp(1, 4096);
+                        self.custom_portrait_height = self.custom_portrait_height.clamp(1, 4096);
+                        self.custom_token_width = self.custom_token_width.clamp(1, 4096);
+                        self.custom_token_height = self.custom_token_height.clamp(1, 4096);
+                        self.export_size_selection = ExportSize::Custom {
+                            portrait: (self.custom_portrait_width, self.custom_portrait_height),
+                            token: (self.custom_token_width, self.custom_token_height),
+                        };
+                    }
+                }
 
                 ui.separator();
 
