@@ -979,9 +979,19 @@ impl FECharacterCreator {
             .add_filter("FECC Character", &["fecc"])
             .pick_file()
         {
-            let result = std::fs::read_to_string(path)
+            let file_stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_owned());
+            let result = std::fs::read_to_string(&path)
                 .map_err(|e| e.to_string())
-                .and_then(|json| serde_json::from_str(&json).map_err(|e| e.to_string()));
+                .and_then(|content| {
+                    fecc_core::file_io::parse_character_save(
+                        &content,
+                        file_stem.as_deref(),
+                        &self.asset_libraries,
+                    )
+                });
 
             sender
                 .unbounded_send(result)
@@ -1025,14 +1035,28 @@ impl FECharacterCreator {
 
     fn load_fecc(&self) {
         let sender = self.loaded_character_sender.clone();
+        let asset_libraries = self.asset_libraries.clone();
         wasm_bindgen_futures::spawn_local(async move {
             if let Some(file) = rfd::AsyncFileDialog::new()
                 .add_filter("FECC Character", &["fecc"])
                 .pick_file()
                 .await
             {
+                let file_name = file.file_name();
+                let file_stem = std::path::Path::new(&file_name)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_owned());
                 let bytes = file.read().await;
-                let result = serde_json::from_slice(&bytes).map_err(|e| e.to_string());
+                let result = String::from_utf8(bytes)
+                    .map_err(|e| format!("Failed to read file as UTF-8: {e}"))
+                    .and_then(|content| {
+                        fecc_core::file_io::parse_character_save(
+                            &content,
+                            file_stem.as_deref(),
+                            &asset_libraries,
+                        )
+                    });
                 sender.unbounded_send(result).unwrap();
             }
         });

@@ -1,5 +1,8 @@
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+pub mod legacy;
+
 use crate::asset::{Asset, AssetType};
+use crate::character::Character;
 use crate::types::Rgba;
 use indexmap::IndexMap;
 #[cfg(target_arch = "wasm32")]
@@ -172,6 +175,35 @@ pub fn trigger_download(bytes: &[u8], filename: &str) -> Result<(), Box<dyn Erro
     Ok(())
 }
 
+/// Parses a character save file from text content.
+///
+/// Automatically detects whether the content is a modern FECC 4e JSON save or
+/// a legacy V3 save file. If `file_stem` is provided and the loaded character has
+/// an empty name, `file_stem` will be used as the character's name.
+pub fn parse_character_save(
+    content: &str,
+    file_stem: Option<&str>,
+    asset_libraries: &HashMap<AssetType, IndexMap<String, Asset>>,
+) -> Result<Character, String> {
+    if content.trim_start().starts_with('{') {
+        let mut character: Character =
+            serde_json::from_str(content).map_err(|e| format!("Failed to parse JSON save: {e}"))?;
+        if character.name.is_empty()
+            && let Some(stem) = file_stem
+        {
+            character.name = stem.to_owned();
+        }
+        Ok(character)
+    } else if legacy::is_legacy_save(content) {
+        legacy::parse_legacy_save(content, file_stem, asset_libraries)
+    } else {
+        Err(
+            "Unrecognized save file format. Expected FECC 4e JSON or legacy V3 save file."
+                .to_owned(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +265,45 @@ mod tests {
         let colours = parse_colours(&mut reader).unwrap();
         assert_eq!(colours.len(), 1);
         assert_eq!(colours[0], Rgba::new(255, 0, 0, 255));
+    }
+
+    #[test]
+    fn test_parse_character_save_json() {
+        let libraries = HashMap::new();
+        let json_data = r#"{"name":"Hero","parts":{},"colours":{}}"#;
+        let character = parse_character_save(json_data, Some("Fallback"), &libraries).unwrap();
+        assert_eq!(character.name, "Hero");
+
+        let json_no_name = r#"{"name":"","parts":{},"colours":{}}"#;
+        let character_stem =
+            parse_character_save(json_no_name, Some("StemName"), &libraries).unwrap();
+        assert_eq!(character_stem.name, "StemName");
+    }
+
+    #[test]
+    fn test_parse_character_save_legacy() {
+        let mut libraries = HashMap::new();
+        libraries.insert(AssetType::Armour, IndexMap::new());
+        libraries.insert(AssetType::Face, IndexMap::new());
+        libraries.insert(AssetType::Hair, IndexMap::new());
+        libraries.insert(AssetType::HairBack, IndexMap::new());
+        libraries.insert(AssetType::Accessory, IndexMap::new());
+        libraries.insert(AssetType::Token, IndexMap::new());
+
+        let legacy_content =
+            "===COLOR_START===\n===COLOR_END===\n===TOOLBOX_START===\n===TOOLBOX_END===\n";
+        let character =
+            parse_character_save(legacy_content, Some("LegacyHero"), &libraries).unwrap();
+        assert_eq!(character.name, "LegacyHero");
+    }
+
+    #[test]
+    fn test_parse_character_save_unrecognized() {
+        let libraries = HashMap::new();
+        let result = parse_character_save("NOT A VALID FORMAT", Some("Test"), &libraries);
+        match result {
+            Err(e) => assert!(e.contains("Unrecognized save file format")),
+            Ok(_) => panic!("Expected error for unrecognized format"),
+        }
     }
 }
