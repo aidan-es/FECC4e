@@ -1,10 +1,12 @@
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
 use crate::asset::{Asset, AssetType};
+use crate::asset_aliases;
 use crate::character::Colourable::{
     Accessory, Cloth, EyeAndBeard, Hair, Leather, Metal, Skin, Trim,
 };
 use crate::extensions::rgba::AdjustBrightness as _;
 use crate::types::{Point, Rgba};
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use strum_macros::{Display, EnumIter};
 
@@ -291,6 +293,25 @@ impl Character {
             AssetType::HairBack => self.hair_back = None,
             AssetType::Accessory => self.accessory = None,
             AssetType::Token => self.token = None,
+        }
+    }
+
+    pub fn relink_assets(&mut self, asset_libraries: &HashMap<AssetType, IndexMap<String, Asset>>) {
+        for (asset_type, part) in [
+            (AssetType::Armour, &mut self.armour),
+            (AssetType::Face, &mut self.face),
+            (AssetType::Hair, &mut self.hair),
+            (AssetType::HairBack, &mut self.hair_back),
+            (AssetType::Accessory, &mut self.accessory),
+            (AssetType::Token, &mut self.token),
+        ] {
+            if let Some(part) = part
+                && let Some(asset) = asset_libraries
+                    .get(&asset_type)
+                    .and_then(|library| asset_aliases::resolve(library, &part.asset.id))
+            {
+                part.asset = asset.clone();
+            }
         }
     }
 }

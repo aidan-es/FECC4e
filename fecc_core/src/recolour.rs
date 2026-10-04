@@ -38,9 +38,8 @@ const LEATHER_DARKER_SHADE_INDEX: usize = 20;
 
 /// Recolours an RgbaImage
 ///
-/// The implementation uses a lookup table (LUT) for performance,
-/// mapping red channel values to their final colours before iterating over the pixels,
-/// avoiding repeated hash map lookups in the inner loop.
+/// Uses a lookup table for performance, mapping red channel values to their final colours before
+/// iterating over the pixels, avoiding repeated hash map lookups in the inner loop.
 pub fn recolour(
     image: &mut RgbaImage,
     asset_type: AssetType,

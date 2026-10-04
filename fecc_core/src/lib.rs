@@ -1,5 +1,6 @@
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
 pub mod asset;
+pub mod asset_aliases;
 pub mod character;
 pub mod export;
 pub mod extensions;

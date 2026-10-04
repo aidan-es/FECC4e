@@ -77,6 +77,28 @@ fn add_asset_to_library(
     }
 }
 
+/// The libraries the native app loads from the `art` directory.
+#[cfg(test)]
+pub(crate) fn repository_art_libraries() -> HashMap<AssetType, IndexMap<String, Asset>> {
+    use strum::IntoEnumIterator as _;
+
+    let art_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../art");
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&art_dir)
+        .expect("Failed to read the art directory")
+        .map(|entry| entry.expect("Failed to read the art directory").path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "png"))
+        .collect();
+    paths.sort();
+
+    let mut asset_libraries = AssetType::iter()
+        .map(|asset_type| (asset_type, IndexMap::new()))
+        .collect();
+    for path in &paths {
+        add_asset_to_library(&mut asset_libraries, path);
+    }
+    asset_libraries
+}
+
 /// Asynchronously loads a list of colours from a CSV file.
 ///
 /// On native builds, it reads from the local filesystem.
@@ -179,7 +201,8 @@ pub fn trigger_download(bytes: &[u8], filename: &str) -> Result<(), Box<dyn Erro
 ///
 /// Automatically detects whether the content is a modern FECC 4e JSON save or
 /// a legacy V3 save file. If `file_stem` is provided and the loaded character has
-/// an empty name, `file_stem` will be used as the character's name.
+/// an empty name, `file_stem` will be used as the character's name. The parts of a
+/// FECC 4e save are relinked to the libraries, following any art renamed since it was saved.
 pub fn parse_character_save(
     content: &str,
     file_stem: Option<&str>,
@@ -193,6 +216,7 @@ pub fn parse_character_save(
         {
             character.name = stem.to_owned();
         }
+        character.relink_assets(asset_libraries);
         Ok(character)
     } else if legacy::is_legacy_save(content) {
         legacy::parse_legacy_save(content, file_stem, asset_libraries)
@@ -305,5 +329,75 @@ mod tests {
             Err(e) => assert!(e.contains("Unrecognized save file format")),
             Ok(_) => panic!("Expected error for unrecognized format"),
         }
+    }
+
+    /// The asset id of each part, in drawing order, after checking that each part has the
+    /// library's copy of its asset.
+    fn part_ids<'a>(
+        character: &'a Character,
+        libraries: &HashMap<AssetType, IndexMap<String, Asset>>,
+    ) -> [Option<&'a str>; 6] {
+        [
+            &character.hair_back,
+            &character.armour,
+            &character.face,
+            &character.hair,
+            &character.accessory,
+            &character.token,
+        ]
+        .map(|part| {
+            part.as_ref().map(|part| {
+                let asset = &part.asset;
+                assert_eq!(
+                    libraries[&asset.asset_type].get(&asset.id),
+                    Some(asset),
+                    "{} is not the library's copy",
+                    asset.id
+                );
+                asset.id.as_str()
+            })
+        })
+    }
+
+    #[test]
+    fn test_parse_character_save_4e_with_old_names() {
+        // A FECC 4e save made before Legualt, EirkOld, Teifling2 and sage_casting were renamed.
+        let content = include_str!("../tests/fixtures/4e_save.fecc");
+        let libraries = repository_art_libraries();
+
+        let character = parse_character_save(content, None, &libraries).unwrap();
+
+        assert_eq!(
+            part_ids(&character, &libraries),
+            [
+                Some("Tiefling2_HairBack"),
+                Some("ErikOld_Armour"),
+                Some("Legault_Face"),
+                Some("Tiefling2_Hair"),
+                None,
+                Some("SageCasting_Token"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_character_save_v3_with_old_names() {
+        // A V3 save that uses Eirk, Legualt, Teifling2 and sage_casting.
+        let content = include_str!("../tests/fixtures/v3_save2.fecc");
+        let libraries = repository_art_libraries();
+
+        let character = parse_character_save(content, None, &libraries).unwrap();
+
+        assert_eq!(
+            part_ids(&character, &libraries),
+            [
+                Some("Tiefling2_HairBack"),
+                Some("Legault_Armour"),
+                Some("ErikOld_Face"),
+                Some("Tiefling2_Hair"),
+                None,
+                Some("SageCasting_Token"),
+            ]
+        );
     }
 }

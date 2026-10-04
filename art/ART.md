@@ -5,7 +5,7 @@ description: A guide on how to create and add custom art assets to the FE Charac
 
 ## How to Add Art Files
 
-- If you're using a FECC4e native application, simply place the file into the 'art' directory that you'll find in the
+- If you're using a FECC4e native (Windows, Linux, macOS) application, simply place the file into the 'art' directory that you'll find in the
   archive folder next to the executable.
 - If you're using a FECC4e web application:
     - Click 'Add Art' on the menu bar.
@@ -97,5 +97,3 @@ should use in your art).
 19 - Leather Colour (base)
 
 20 - Leather Colour (dark)
-
-

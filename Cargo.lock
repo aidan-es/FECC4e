@@ -1270,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "fe_character_creator"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "ahash",
  "chrono",
@@ -1312,7 +1312,7 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "fecc_cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "fecc_core",
  "image",
@@ -1324,7 +1324,7 @@ dependencies = [
 
 [[package]]
 name = "fecc_core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "csv",
  "glob",

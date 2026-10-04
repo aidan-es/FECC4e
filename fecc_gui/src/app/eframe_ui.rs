@@ -874,20 +874,7 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
                     self.asset_libraries = libs;
 
                     if self.character_needs_asset_refresh {
-                        for asset_type in AssetType::iter() {
-                            if let Some(part) = self.character.get_character_part(&asset_type)
-                                && let Some(asset_from_lib) = self
-                                    .asset_libraries
-                                    .get(&asset_type)
-                                    .and_then(|lib| lib.get(&part.asset.id))
-                            {
-                                let new_part = fecc_core::character::CharacterPart {
-                                    asset: asset_from_lib.clone(),
-                                    ..part
-                                };
-                                self.character.set_character_part(&asset_type, new_part);
-                            }
-                        }
+                        self.character.relink_assets(&self.asset_libraries);
                         self.character_needs_asset_refresh = false;
 
                         // Also trigger image loading

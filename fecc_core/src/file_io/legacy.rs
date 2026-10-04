@@ -2,10 +2,11 @@
 pub mod v3_assets;
 
 use crate::asset::{Asset, AssetType};
+use crate::asset_aliases;
 use crate::character::{Character, CharacterPart, CharacterPartColours, Colourable, Outlines};
 use crate::types::{Point, Rgba};
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Checks if the file content matches a legacy V3 save file.
 pub fn is_legacy_save(content: &str) -> bool {
@@ -35,9 +36,10 @@ pub fn decode_hex_colour(hex_str: &str) -> Result<Rgba, String> {
 
 /// Resolves an index from V3 into an `Asset`.
 ///
-/// Uses V3 asset list. Fallback to alphabetically sorting our current assets provides limited and
-/// experimental support for V3 saves that make use of a modded asset where that asset has also been
-/// added to 4E.
+/// Uses V3 asset list, following any art renamed since. A listed asset that is missing from the
+/// library gives no part. Fallback to alphabetically sorting our current assets (under the names V3
+/// knew them by) provides limited and experimental support for V3 saves that make use of a modded
+/// asset where that asset has also been added to 4E.
 pub fn get_asset_by_index(
     asset_type: AssetType,
     index: usize,
@@ -55,30 +57,51 @@ pub fn get_asset_by_index(
     // 1. Try V3 asset listing first
     if let Some(canonical_name) = v3_assets::get_v3_asset_name(asset_type, index) {
         let expected_id = format!("{canonical_name}_{asset_type}");
-        if let Some(asset) = library.get(&expected_id) {
+        if let Some(asset) = asset_aliases::resolve(library, &expected_id) {
             return Ok(Some(asset.clone()));
         }
         if let Some(asset) = library.values().find(|a| a.name == canonical_name) {
             return Ok(Some((*asset).clone()));
         }
+        log::warn!("V3 {asset_type} {index} is {canonical_name}, which is not in the art library");
+        return Ok(None);
     }
 
     // 2. Fallback: Case-insensitive sorting for out-of-range indices (e.g. modded V3 saves)
-    let mut sorted_assets: Vec<&Asset> = library.values().collect();
-    sorted_assets.sort_by(|a, b| {
-        let name_a = a.path.file_name().and_then(|s| s.to_str()).unwrap_or(&a.id);
-        let name_b = b.path.file_name().and_then(|s| s.to_str()).unwrap_or(&b.id);
-        name_a.to_lowercase().cmp(&name_b.to_lowercase())
-    });
-
+    let sorted_assets = library_in_v3_sort_order(library);
     if index <= sorted_assets.len() {
-        Ok(Some(sorted_assets[index - 1].clone()))
+        Ok(Some(sorted_assets[index - 1].1.clone()))
     } else {
         Err(format!(
             "Asset index {index} out of range for {asset_type:?} (max {})",
             sorted_assets.len()
         ))
     }
+}
+
+/// The library in V3's sort order, with renamed art sorted under its old name.
+fn library_in_v3_sort_order(library: &IndexMap<String, Asset>) -> Vec<(String, &Asset)> {
+    let renamed = asset_aliases::renamed();
+    let new_ids: HashSet<&str> = renamed.values().copied().collect();
+
+    let mut assets: Vec<(String, &Asset)> = library
+        .values()
+        .filter(|asset| !new_ids.contains(asset.id.as_str()))
+        .map(|asset| {
+            let file_name = asset.path.file_name().and_then(|s| s.to_str());
+            (file_name.unwrap_or(&asset.id).to_owned(), asset)
+        })
+        .collect();
+    for (old_id, new_id) in renamed {
+        if !library.contains_key(*old_id)
+            && let Some(asset) = library.get(*new_id)
+        {
+            assets.push((format!("{old_id}.png"), asset));
+        }
+    }
+
+    assets.sort_by_cached_key(|(file_name, _)| file_name.to_lowercase());
+    assets
 }
 
 /// Parses a legacy V3 save file and converts it into a V4 `Character`.
@@ -299,7 +322,6 @@ pub fn parse_legacy_save(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_decode_hex_colour() {
@@ -332,202 +354,86 @@ mod tests {
 
     #[test]
     fn test_parse_legacy_save_full() {
-        let legacy_text = include_str!("../../tests/fixtures/example-save.fecc");
+        let legacy_text = include_str!("../../tests/fixtures/v3_save.fecc");
         assert!(is_legacy_save(legacy_text));
 
-        let mut libraries = HashMap::new();
+        let libraries = crate::file_io::repository_art_libraries();
+        let character = parse_legacy_save(legacy_text, None, &libraries).unwrap();
 
-        // Create mock Face assets
-        let mut face_map = IndexMap::new();
-        for name in ["Aias", "Aion", "Alen", "Amelia", "Anna"] {
-            let asset = Asset::new(
-                (*name).to_owned(),
-                PathBuf::from(format!("art/{name}_Face.png")),
-                None,
-                AssetType::Face,
-            );
-            face_map.insert(asset.id.clone(), asset);
-        }
-        libraries.insert(AssetType::Face, face_map);
+        assert_eq!(character.name, "");
 
-        // Create mock Armour assets
-        let mut armour_map = IndexMap::new();
-        for name in ["Aias", "Aion", "Alen", "Amelia"] {
-            let asset = Asset::new(
-                (*name).to_owned(),
-                PathBuf::from(format!("art/{name}_Armour.png")),
-                None,
-                AssetType::Armour,
-            );
-            armour_map.insert(asset.id.clone(), asset);
-        }
-        libraries.insert(AssetType::Armour, armour_map);
+        let face = character.face.as_ref().unwrap();
+        assert_eq!(face.asset.id, "Amelia_Face");
+        assert_eq!(face.position, Point::new(0.5, 0.5));
+        assert_eq!(face.scale, 1.0 / 96.0);
+        assert_eq!(face.rotation, 0.0);
+        assert!(!face.flipped);
 
-        // Create mock Hair & HairBack assets
-        let mut hair_map = IndexMap::new();
-        let mut hair_back_map = IndexMap::new();
-        for name in ["Aias", "Aion", "Alen", "Amelia"] {
-            let hair_asset = Asset::new(
-                (*name).to_owned(),
-                PathBuf::from(format!("art/{name}_Hair.png")),
-                Some(format!("{name}_HairBack")),
-                AssetType::Hair,
-            );
-            let back_asset = Asset::new(
-                (*name).to_owned(),
-                PathBuf::from(format!("art/{name}_HairBack.png")),
-                None,
-                AssetType::HairBack,
-            );
-            hair_map.insert(hair_asset.id.clone(), hair_asset);
-            hair_back_map.insert(back_asset.id.clone(), back_asset);
-        }
-        libraries.insert(AssetType::Hair, hair_map);
-        libraries.insert(AssetType::HairBack, hair_back_map);
+        assert_eq!(character.armour.as_ref().unwrap().asset.id, "Alen_Armour");
+        assert_eq!(character.hair.as_ref().unwrap().asset.id, "Alen_Hair");
+        assert_eq!(
+            character.accessory.as_ref().unwrap().asset.id,
+            "Wario_Accessory"
+        );
 
-        // Create mock Accessory assets
-        let mut acc_map = IndexMap::new();
-        for name in ["Sunglasses", "Wario"] {
-            let asset = Asset::new(
-                (*name).to_owned(),
-                PathBuf::from(format!("art/{name}_Accessory.png")),
-                None,
-                AssetType::Accessory,
-            );
-            acc_map.insert(asset.id.clone(), asset);
-        }
-        libraries.insert(AssetType::Accessory, acc_map);
+        let hair = character.hair.as_ref().unwrap();
+        let hair_back = character.hair_back.as_ref().unwrap();
+        assert_eq!(hair_back.asset.id, "Alen_HairBack");
+        assert_eq!(hair_back.position, hair.position);
+        assert_eq!(hair_back.scale, hair.scale);
 
-        // Create mock Token assets
-        let mut token_map = IndexMap::new();
-        for name in [
-            "AcherAlt2Iscaneus",
-            "Archer",
-            "ArcherAlt2Iscaneus",
-            "ArcherAltIscaneus",
-            "ArcherFemale",
-            "ArcherIscaneus",
+        let token = character.token.as_ref().unwrap();
+        assert_eq!(token.asset.id, "ArcherIscaneus_Token");
+        assert_eq!(token.position, Point::new(0.5, 0.5));
+        assert_eq!(token.scale, 1.0 / 64.0);
+
+        let cloth = &character.character_colours[&Colourable::Cloth];
+        assert_eq!(cloth.lighter, Rgba::new(117, 117, 164, 255));
+        assert_eq!(cloth.neutral, Rgba::new(82, 82, 115, 255));
+        assert_eq!(cloth.darker, Rgba::new(57, 57, 80, 255));
+
+        let skin = &character.character_colours[&Colourable::Skin];
+        assert_eq!(skin.base, skin.neutral);
+        assert_eq!(skin.neutral, Rgba::new(248, 208, 112, 255));
+        assert_eq!(skin.darker, Rgba::new(232, 152, 80, 255));
+
+        let border = Rgba::new(56, 32, 64, 255);
+        for asset_type in [
+            AssetType::Face,
+            AssetType::Armour,
+            AssetType::Hair,
+            AssetType::HairBack,
+            AssetType::Accessory,
+            AssetType::Token,
         ] {
-            let asset = Asset::new(
-                (*name).to_owned(),
-                PathBuf::from(format!("art/{name}_Token.png")),
-                None,
-                AssetType::Token,
+            assert_eq!(
+                character.outline_colours.get_outline_colour(asset_type),
+                border,
+                "{asset_type} outline"
             );
-            token_map.insert(asset.id.clone(), asset);
         }
-        libraries.insert(AssetType::Token, token_map);
-
-        let character = parse_legacy_save(legacy_text, Some("example-save"), &libraries).unwrap();
-
-        assert_eq!(character.name, "example-save");
-
-        // Verify Face (index 4 -> Amelia)
-        assert!(character.face.is_some());
-        assert_eq!(character.face.as_ref().unwrap().asset.name, "Amelia");
-        assert_eq!(
-            character.face.as_ref().unwrap().position,
-            Point::new(0.5, 0.5)
-        );
-
-        // Verify Armour (index 3 -> Alen)
-        assert!(character.armour.is_some());
-        assert_eq!(character.armour.as_ref().unwrap().asset.name, "Alen");
-
-        // Verify Hair (index 3 -> Alen) & HairBack
-        assert!(character.hair.is_some());
-        assert_eq!(character.hair.as_ref().unwrap().asset.name, "Alen");
-        assert!(character.hair_back.is_some());
-        assert_eq!(character.hair_back.as_ref().unwrap().asset.name, "Alen");
-
-        // Verify Accessory (index 2 -> Wario)
-        assert!(character.accessory.is_some());
-        assert_eq!(character.accessory.as_ref().unwrap().asset.name, "Wario");
-
-        // Verify Token (index 6 -> ArcherIscaneus)
-        assert!(character.token.is_some());
-        assert_eq!(
-            character.token.as_ref().unwrap().asset.name,
-            "ArcherIscaneus"
-        );
-        assert_eq!(
-            character.token.as_ref().unwrap().position,
-            Point::new(0.5, 0.5)
-        );
-
-        // Verify Colours
-        assert_eq!(
-            character.character_colours[&Colourable::Cloth].neutral,
-            Rgba::new(82, 82, 115, 255)
-        );
-        assert_eq!(
-            character.character_colours[&Colourable::Cloth].lighter,
-            Rgba::new(117, 117, 164, 255)
-        );
-
-        // Verify Outline Colours
-        assert_eq!(
-            character
-                .outline_colours
-                .get_outline_colour(AssetType::Face),
-            Rgba::new(56, 32, 64, 255)
-        );
     }
 
+    const V3_LISTS: [(AssetType, &[&str]); 5] = [
+        (AssetType::Face, v3_assets::V3_FACES),
+        (AssetType::Armour, v3_assets::V3_ARMOUR),
+        (AssetType::Hair, v3_assets::V3_HAIR),
+        (AssetType::Accessory, v3_assets::V3_ACCESSORIES),
+        (AssetType::Token, v3_assets::V3_TOKENS),
+    ];
+
     #[test]
-    fn test_legacy_resolution_resilient_to_custom_art() {
-        let legacy_text = include_str!("../../tests/fixtures/example-save.fecc");
-        let mut libraries = HashMap::new();
+    fn test_every_v3_asset_is_in_the_art_library() {
+        let libraries = crate::file_io::repository_art_libraries();
 
-        // Face map with custom user art that precedes Amelia alphabetically
-        let mut face_map = IndexMap::new();
-        for name in [
-            "000_MyCustom_Face",
-            "AAA_Custom_Face",
-            "Aias",
-            "Aion",
-            "Alen",
-            "Amelia",
-        ] {
-            let asset = Asset::new(
-                (*name).to_owned(),
-                PathBuf::from(format!("art/{name}_Face.png")),
-                None,
-                AssetType::Face,
-            );
-            face_map.insert(asset.id.clone(), asset);
+        for (asset_type, names) in V3_LISTS {
+            for (position, name) in names.iter().enumerate() {
+                let asset = get_asset_by_index(asset_type, position + 1, &libraries).unwrap();
+                assert!(
+                    asset.is_some(),
+                    "V3 {asset_type} {name} is not in the art library"
+                );
+            }
         }
-        libraries.insert(AssetType::Face, face_map);
-
-        // Token map with custom user art that precedes ArcherIscaneus alphabetically
-        let mut token_map = IndexMap::new();
-        for name in [
-            "000_Custom_Token",
-            "AcherAlt2Iscaneus",
-            "Archer",
-            "ArcherAlt2Iscaneus",
-            "ArcherAltIscaneus",
-            "ArcherFemale",
-            "ArcherIscaneus",
-        ] {
-            let asset = Asset::new(
-                (*name).to_owned(),
-                PathBuf::from(format!("art/{name}_Token.png")),
-                None,
-                AssetType::Token,
-            );
-            token_map.insert(asset.id.clone(), asset);
-        }
-        libraries.insert(AssetType::Token, token_map);
-
-        // Legacy save uses Face index 4 (Amelia) and Token index 6 (ArcherIscaneus)
-        let character = parse_legacy_save(legacy_text, Some("test"), &libraries).unwrap();
-
-        // Verify that custom art did not push Amelia or ArcherIscaneus off their indices
-        assert_eq!(character.face.as_ref().unwrap().asset.name, "Amelia");
-        assert_eq!(
-            character.token.as_ref().unwrap().asset.name,
-            "ArcherIscaneus"
-        );
     }
 }
