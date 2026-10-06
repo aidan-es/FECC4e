@@ -252,7 +252,7 @@ impl Default for Character {
                 ),
                 (
                     Accessory,
-                    CharacterPartColours::new(&Rgba::new(0, 0, 0, 255)),
+                    CharacterPartColours::new(&Rgba::new(247, 173, 82, 255)),
                 ),
             ]
             .into_iter()

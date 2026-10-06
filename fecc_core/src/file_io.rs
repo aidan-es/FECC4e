@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn test_parse_character_save_4e_with_old_names() {
         // A FECC 4e save made before Legualt, EirkOld, Teifling2 and sage_casting were renamed.
-        let content = include_str!("../tests/fixtures/4e_save.fecc");
+        let content = include_str!("../tests/fixtures/4e_save_0-2-0.fecc");
         let libraries = repository_art_libraries();
 
         let character = parse_character_save(content, None, &libraries).unwrap();

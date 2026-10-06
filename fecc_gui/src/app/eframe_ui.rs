@@ -297,6 +297,8 @@ impl eframe::App for FECharacterCreator {
                     self.character_needs_asset_refresh = true;
                 }
 
+                ui.separator();
+
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let asset_type = self.active_tab;
 

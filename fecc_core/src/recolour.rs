@@ -35,6 +35,9 @@ const CLOTH_DARKER_SHADE_INDEX: usize = 17;
 const LEATHER_LIGHTER_SHADE_INDEX: usize = 18;
 const LEATHER_NEUTRAL_SHADE_INDEX: usize = 19;
 const LEATHER_DARKER_SHADE_INDEX: usize = 20;
+const ACCESSORY_LIGHTER_SHADE_INDEX: usize = 21;
+const ACCESSORY_NEUTRAL_SHADE_INDEX: usize = 22;
+const ACCESSORY_DARKER_SHADE_INDEX: usize = 23;
 
 /// Recolours an RgbaImage
 ///
@@ -46,7 +49,7 @@ pub fn recolour(
     character_colours: &HashMap<Colourable, CharacterPartColours>,
     outline_colours: &Outlines,
 ) {
-    let mut recolour_map: [Option<Rgba>; 21] = [None; 21];
+    let mut recolour_map: [Option<Rgba>; 24] = [None; 24];
 
     // Map source colour keys (0-20) to target colours.
     // The key is derived from the red channel: (red / 10).
@@ -94,6 +97,10 @@ pub fn recolour(
         recolour_map[LEATHER_LIGHTER_SHADE_INDEX] = Some(character_colours[&Leather].lighter);
         recolour_map[LEATHER_NEUTRAL_SHADE_INDEX] = Some(character_colours[&Leather].neutral);
         recolour_map[LEATHER_DARKER_SHADE_INDEX] = Some(character_colours[&Leather].darker);
+        // Accessory
+        recolour_map[ACCESSORY_LIGHTER_SHADE_INDEX] = Some(character_colours[&Accessory].lighter);
+        recolour_map[ACCESSORY_NEUTRAL_SHADE_INDEX] = Some(character_colours[&Accessory].neutral);
+        recolour_map[ACCESSORY_DARKER_SHADE_INDEX] = Some(character_colours[&Accessory].darker);
     }
 
     for pixel in image.pixels_mut() {
@@ -191,7 +198,7 @@ mod tests {
         char_colours.insert(Cloth, cloth_parts);
 
         // Fill others with default to avoid panic
-        for colourable in [Hair, Skin, Metal, Trim, Leather] {
+        for colourable in [Hair, Skin, Metal, Trim, Leather, Accessory] {
             char_colours.insert(colourable, CharacterPartColours::default());
         }
 

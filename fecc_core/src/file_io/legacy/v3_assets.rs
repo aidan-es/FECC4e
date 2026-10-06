@@ -1,6 +1,11 @@
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
 //! ValeTheVioletMote's FECCV3 save files refer to assets with indices that correspond to an
 //! alphabetical list of asset names.
+
+// Note: This could be combined into the aliases functionality, simply mapping V3 numerals to current
+//  name. That would be cleaner but this allows more room to support V3 saves with custom art though
+//  I don't know how large that use case actually is.
+
 use crate::asset::AssetType;
 
 pub const V3_FACES: &[&str] = &[

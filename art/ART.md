@@ -54,7 +54,7 @@ should use in your art).
 
 11 - Accessory Colour (dark)
 
-### For Armour and Hair files:
+### For Armour, Hair and Token files:
 
 0 - Outline Colour
 
@@ -97,3 +97,9 @@ should use in your art).
 19 - Leather Colour (base)
 
 20 - Leather Colour (dark)
+
+21 - Accessory Colour (light)
+
+22 - Accessory Colour (base)
+
+23 - Accessory Colour (dark)
