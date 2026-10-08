@@ -1,4 +1,5 @@
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+use crate::asset_tags::{ParsedName, parse_name};
 use image::RgbaImage;
 use std::option::Option;
 use std::path::{Path, PathBuf};
@@ -52,34 +53,48 @@ impl AssetType {
 /// Image data is loaded on demand.
 #[derive(Clone, serde::Deserialize, serde::Serialize, Eq, PartialEq, Default, Debug)]
 pub struct Asset {
-    /// Form is `name_type`, e.g. `MyAsset_Face`.
+    /// Form is `name_type`, e.g. `Archer_Face`.
     pub id: String,
+    /// Name without tags or type, e.g. `Archer`.
     pub name: String,
     pub path: PathBuf,
     pub back_part: Option<String>,
     pub asset_type: AssetType,
+    /// Categories from the file name, e.g. the game. See [`crate::asset_tags`].
+    #[serde(skip)]
+    pub categories: Vec<String>,
+    /// Contributors from the file name. See [`crate::asset_tags`].
+    #[serde(skip)]
+    pub contributors: Vec<String>,
     #[serde(skip)]
     pub image_data: Option<Arc<RgbaImage>>,
 }
 
 impl Asset {
+    /// Creates an asset.
     pub fn new(
         name: String,
         path: PathBuf,
         back_part: Option<String>,
         asset_type: AssetType,
     ) -> Self {
-        Self {
-            id: Self::make_id(&name, asset_type),
+        let parsed = parse_name(&name).unwrap_or_else(|_| ParsedName {
             name,
+            ..Default::default()
+        });
+        Self {
+            id: Self::make_id(&parsed.name, asset_type),
+            name: parsed.name,
             path,
             back_part,
             asset_type,
+            categories: parsed.categories,
+            contributors: parsed.contributors,
             image_data: None,
         }
     }
 
-    /// Builds an asset id in the form `name_type`, e.g. `MyAsset_Face`.
+    /// Builds an asset id in the form `name_type`, e.g. `Archer_Face`.
     fn make_id(name: &str, asset_type: AssetType) -> String {
         format!("{name}_{asset_type}")
     }
@@ -88,12 +103,14 @@ impl Asset {
     ///
     /// Other asset types have no back part.
     fn back_part_id(name: &str, asset_type: AssetType) -> Option<String> {
-        (asset_type == AssetType::Hair).then(|| Self::make_id(name, AssetType::HairBack))
+        let name = parse_name(name).map_or_else(|_| name.to_owned(), |parsed| parsed.name);
+        (asset_type == AssetType::Hair).then(|| Self::make_id(&name, AssetType::HairBack))
     }
 
     /// Parses a filename to extract the asset's name and type.
     ///
-    /// Filenames are expected to be in the format `Name_Type`.
+    /// Filenames are expected to be in the format `Name_Type`. The name may include tags, which
+    /// are returned with it. See [`crate::asset_tags`].
     pub fn parse_filename(filename: &str) -> Result<(&str, AssetType), String> {
         let (name, asset_type_str) = filename
             .rsplit_once('_')
@@ -110,6 +127,7 @@ impl Asset {
                 return Err(format!("Unknown asset type in filename: {asset_type_str}"));
             }
         };
+        parse_name(name)?;
 
         Ok((name, asset_type))
     }

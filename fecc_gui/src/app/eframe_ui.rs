@@ -1,21 +1,24 @@
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+use super::asset_matches;
 use crate::FECharacterCreator;
 use crate::extensions::color32::Contrast as _;
+use crate::extensions::tag_label::{TagKind, TagLabel as _};
 use crate::extensions::toggle_switch::toggle;
 use ahash::HashSet;
 use eframe::emath::vec2;
 use eframe::epaint::{Color32, Stroke};
 use egui::{Button, Context, Image, RichText, Ui};
 use egui_commonmark::CommonMarkViewer;
-use egui_extras::install_image_loaders;
 use egui_extras::{Column, TableBuilder};
 use fecc_core::asset::AssetType;
+use fecc_core::asset_tags::{AvailableTags, TagChoice, category_title};
 use fecc_core::character::Colourable::Skin;
 use fecc_core::character::{CharacterPartColours, Colourable, Shade};
 use fecc_core::export::{ExportSize, export_character};
 use fecc_core::random::{randomize_assets, randomize_colours};
 use fecc_core::types::Rgba;
 use image::RgbaImage;
+use std::collections::BTreeSet;
 use strum::IntoEnumIterator as _;
 
 // Helper functions for colour conversion
@@ -30,6 +33,10 @@ fn from_c32(c: Color32) -> Rgba {
 impl eframe::App for FECharacterCreator {
     fn ui(&mut self, whole_app_ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = whole_app_ui.ctx().clone();
+        // Receive background loads every frame, regardless of which panels are open
+        self.update_stored_colour_palettes();
+        self.update_stored_asset_libraries(&ctx);
+        self.update_stored_image_data_cache();
         {
             let mut character = self.character.clone();
             let asset_libraries = &self.asset_libraries;
@@ -214,6 +221,7 @@ impl eframe::App for FECharacterCreator {
                             &self.asset_libraries,
                             &portrait_types,
                             portrait_canvas_size,
+                            &self.asset_filter,
                         );
 
                         let token_canvas_size = if self.token_rect.width() > 0.0 {
@@ -231,6 +239,7 @@ impl eframe::App for FECharacterCreator {
                             &self.asset_libraries,
                             &[AssetType::Token],
                             token_canvas_size,
+                            &self.asset_filter,
                         );
 
                         if self.randomise_colours_too {
@@ -251,14 +260,16 @@ impl eframe::App for FECharacterCreator {
                 });
                 ui.separator();
 
-                let search_query = self.search_queries.entry(self.active_tab).or_default();
+                self.asset_filter_ui(ui);
+
                 ui.horizontal(|ui| {
                     ui.label("Search:");
-                    ui.text_edit_singleline(search_query);
+                    ui.text_edit_singleline(&mut self.search_query);
                 });
+                let search_query_cleaned = self.search_query.to_lowercase();
+                let (shown, total) = self.count_shown_assets();
+                ui.label(RichText::new(format!("Showing {shown} of {total}")).weak());
                 ui.separator();
-
-                let search_query_cleaned = search_query.to_lowercase();
 
                 if ui
                     .add(Button::new(
@@ -293,6 +304,7 @@ impl eframe::App for FECharacterCreator {
                         &self.asset_libraries,
                         &[asset_type],
                         canvas_size,
+                        &self.asset_filter,
                     );
                     self.character_needs_asset_refresh = true;
                 }
@@ -308,6 +320,14 @@ impl eframe::App for FECharacterCreator {
                     {
                         self.select_asset(&asset.clone(), asset_type);
                     }
+
+                    if shown == 0 && total > 0 {
+                        ui.label("Nothing matches the filter and search.");
+                        if ui.button("Show everything").clicked() {
+                            self.asset_filter = Default::default();
+                            self.search_query.clear();
+                        }
+                    }
                 });
             },
         );
@@ -322,10 +342,6 @@ impl eframe::App for FECharacterCreator {
         egui::Panel::right("colour_selection")
             .default_size(0.0)
             .show_collapsible(whole_app_ui, &mut colour_panel_expanded, |ui| {
-                self.update_stored_colour_palettes();
-                self.update_stored_asset_libraries(&ctx, ui);
-                self.update_stored_image_data_cache();
-
                 ui.add_space(5.0);
 
                 if ui.button("Randomise Colours").clicked() {
@@ -377,7 +393,6 @@ impl eframe::App for FECharacterCreator {
                                 }
 
                                 if self.colour_palettes.contains_key(&colourable) {
-                                    install_image_loaders(ui.ctx());
                                     let cycle_colours_symbol = Image::new(egui::include_image!(
                                         "../../../assets/coins-swap.svg"
                                     ));
@@ -869,7 +884,7 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
         }
     }
 
-    fn update_stored_asset_libraries(&mut self, ctx: &Context, _ui: &mut Ui) {
+    fn update_stored_asset_libraries(&mut self, ctx: &Context) {
         if let Some(mut rx) = self.asset_libraries_receiver.take() {
             match rx.try_recv() {
                 Ok(Some(libs)) => {
@@ -1063,5 +1078,152 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
         }
 
         Ok((unique_colours.len(), has_semi_transparency))
+    }
+}
+
+impl FECharacterCreator {
+    /// Returns the number of assets shown on the active tab and the total number.
+    fn count_shown_assets(&self) -> (usize, usize) {
+        let search_query = self.search_query.to_lowercase();
+        self.asset_libraries
+            .get(&self.active_tab)
+            .map_or((0, 0), |library| {
+                let shown = library
+                    .values()
+                    .filter(|asset| asset_matches(&self.asset_filter, &search_query, asset))
+                    .count();
+                (shown, library.len())
+            })
+    }
+
+    /// Shows the collapsible game and artist filters.
+    ///
+    /// Each row is only shown if some art has that kind of tag.
+    fn asset_filter_ui(&mut self, ui: &mut Ui) {
+        let available = AvailableTags::from_assets(
+            AssetType::get_selectable_part_types()
+                .filter_map(|asset_type| self.asset_libraries.get(&asset_type))
+                .flat_map(|library| library.values()),
+        );
+        if available.categories.is_empty() && available.contributors.is_empty() {
+            return;
+        }
+
+        let active = self.asset_filter.categories.len() + self.asset_filter.contributors.len();
+        let title = if active == 0 {
+            "Filters".to_owned()
+        } else {
+            format!("Filters ({active} active)")
+        };
+        let header = egui::CollapsingHeader::new(title)
+            .id_salt("asset_filters")
+            .open(Some(self.filters_expanded))
+            .show(ui, |ui| {
+                if !available.categories.is_empty() {
+                    let chips = available
+                        .categories
+                        .iter()
+                        .map(|category| {
+                            let hover = category_title(category);
+                            (TagChoice::tag(category), category.clone(), hover)
+                        })
+                        .chain(available.any_uncategorised.then(|| {
+                            (
+                                TagChoice::Untagged,
+                                "Uncategorised".to_owned(),
+                                Some("Art without a game or other category".to_owned()),
+                            )
+                        }));
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Game:");
+                        chip_row(
+                            ui,
+                            &mut self.asset_filter.categories,
+                            chips,
+                            TagKind::Category,
+                        );
+                    });
+                }
+
+                if !available.contributors.is_empty() {
+                    let chips = available
+                        .contributors
+                        .iter()
+                        .map(|artist| (TagChoice::tag(artist), artist.clone(), None))
+                        .chain(available.any_without_contributor.then(|| {
+                            (
+                                TagChoice::Untagged,
+                                "Uncredited".to_owned(),
+                                Some("Art without a credited artist".to_owned()),
+                            )
+                        }));
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Artist:");
+                        chip_row(
+                            ui,
+                            &mut self.asset_filter.contributors,
+                            chips,
+                            TagKind::Artist,
+                        );
+                    });
+                }
+            });
+        if header.header_response.clicked() {
+            self.filters_expanded = !self.filters_expanded;
+        }
+        ui.separator();
+    }
+}
+
+/// Shows an "All" chip followed by a chip for each choice.
+///
+/// Clicking a chip toggles it, and clicking "All" clears the row.
+fn chip_row(
+    ui: &mut Ui,
+    chosen: &mut BTreeSet<TagChoice>,
+    chips: impl Iterator<Item = (TagChoice, String, Option<String>)>,
+    kind: TagKind,
+) {
+    if ui.tag_plain_label(kind, chosen.is_empty(), "All").clicked() {
+        chosen.clear();
+    }
+    for (choice, label, hover) in chips {
+        let selected = chosen.contains(&choice);
+        let mut response = if choice == TagChoice::Untagged {
+            ui.tag_plain_label(kind, selected, label.as_str())
+        } else {
+            ui.tag_label(kind, selected, label.as_str())
+        };
+        if let Some(hover) = hover {
+            response = response.on_hover_text(hover);
+        } else if kind == TagKind::Artist
+            && let Some((name, link)) = artist_info(&label)
+        {
+            response = response.on_hover_ui(|ui| {
+                ui.label(name);
+                if let Some(link) = link {
+                    ui.hyperlink(link);
+                }
+            });
+        }
+        if response.clicked() {
+            if selected {
+                chosen.remove(&choice);
+            } else {
+                chosen.insert(choice);
+            }
+        }
+    }
+}
+
+/// Returns an artist's full credit if known.
+fn artist_info(artist: &str) -> Option<(&'static str, Option<&'static str>)> {
+    match artist.to_lowercase().as_str() {
+        "is" => Some((
+            "Intelligent Systems, the developer of the Fire Emblem series",
+            None,
+        )),
+        "iscaneus" => Some(("Iscaneus", Some("https://www.deviantart.com/iscaneus"))),
+        _ => None,
     }
 }

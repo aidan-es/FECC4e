@@ -213,14 +213,13 @@ mod tests {
             *pixel = Rgba([255, 0, 0, 255]);
         }
 
-        let asset = Asset {
-            id: "Test_Face".to_string(),
-            name: "Test".to_string(),
-            path: std::path::PathBuf::new(),
-            back_part: None,
-            asset_type: AssetType::Face,
-            image_data: Some(Arc::new(image)),
-        };
+        let mut asset = Asset::new(
+            "Test".to_string(),
+            std::path::PathBuf::new(),
+            None,
+            AssetType::Face,
+        );
+        asset.image_data = Some(Arc::new(image));
 
         let part = CharacterPart {
             position: Point::new(50.0, 50.0),
@@ -266,14 +265,13 @@ mod tests {
             *pixel = Rgba([255, 0, 0, 255]);
         }
 
-        let asset = Asset {
-            id: "Test_Face".to_string(),
-            name: "Test".to_string(),
-            path: std::path::PathBuf::new(),
-            back_part: None,
-            asset_type: AssetType::Face,
-            image_data: Some(Arc::new(image)),
-        };
+        let mut asset = Asset::new(
+            "Test".to_string(),
+            std::path::PathBuf::new(),
+            None,
+            AssetType::Face,
+        );
+        asset.image_data = Some(Arc::new(image));
 
         // Centre on a 120x80 canvas
         let part = CharacterPart {

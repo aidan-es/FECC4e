@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(hair_back.scale, hair.scale);
 
         let token = character.token.as_ref().unwrap();
-        assert_eq!(token.asset.id, "ArcherIscaneus_Token");
+        assert_eq!(token.asset.id, "ArcherAlt4_Token");
         assert_eq!(token.position, Point::new(0.5, 0.5));
         assert_eq!(token.scale, 1.0 / 64.0);
 

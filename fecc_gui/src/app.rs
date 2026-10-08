@@ -3,7 +3,9 @@ use std::cmp::PartialEq;
 mod canvas_interaction;
 mod eframe_ui;
 
+use crate::extensions::tag_label::{TagKind, TagLabel as _};
 use fecc_core::asset::{Asset, AssetType};
+use fecc_core::asset_tags::{AssetFilter, TagChoice};
 use fecc_core::character::{Character, CharacterPart, ColourPalette, Colourable, Shade};
 use fecc_core::export::ExportSize;
 use fecc_core::file_io::{load_asset_libraries, load_colours_from_csv, load_image_bytes};
@@ -84,7 +86,9 @@ pub struct FECharacterCreator {
     randomise_colours_too: bool,
 
     #[serde(skip)]
-    search_queries: HashMap<AssetType, String>,
+    search_query: String,
+    asset_filter: AssetFilter,
+    filters_expanded: bool,
     colour_picker_open_state: HashMap<(Colourable, Shade), bool>,
     outline_picker_open_state: HashMap<AssetType, bool>,
     portrait_rect: Rect,
@@ -183,7 +187,9 @@ impl Default for FECharacterCreator {
             new_active_tab: true,
             randomise_used: false,
             randomise_colours_too: false,
-            search_queries: Default::default(),
+            search_query: String::new(),
+            asset_filter: Default::default(),
+            filters_expanded: true,
             colour_picker_open_state: iproduct!(Colourable::iter(), Shade::iter())
                 .map(|combo| (combo, false))
                 .collect(),
@@ -246,6 +252,9 @@ impl Default for FECharacterCreator {
 
 impl FECharacterCreator {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Needed for the SVG icons on the canvas and in the colour panel
+        egui_extras::install_image_loaders(&cc.egui_ctx);
+
         let mut fe_character_creator: Self = if let Some(storage) = cc.storage {
             if let Some(mut saved_app) = eframe::get_value::<Self>(storage, eframe::APP_KEY) {
                 saved_app.is_character_normalised = true;
@@ -267,6 +276,10 @@ impl FECharacterCreator {
 
         #[cfg(not(target_arch = "wasm32"))]
         let tokio_runtime = fe_character_creator.tokio_runtime.clone();
+
+        // Repaint once each load finish so the results show without waiting for input
+        let palettes_ctx = cc.egui_ctx.clone();
+        let assets_ctx = cc.egui_ctx.clone();
 
         let (palettes_tx, palettes_rx) = futures_channel::oneshot::channel();
         let palettes_task = async move {
@@ -300,6 +313,7 @@ impl FECharacterCreator {
             if palettes_tx.send(palettes).is_err() {
                 log::warn!("Palettes receiver dropped before palettes were sent");
             }
+            palettes_ctx.request_repaint();
         };
 
         let (assets_tx, assets_rx) = futures_channel::oneshot::channel();
@@ -314,6 +328,7 @@ impl FECharacterCreator {
                     log::error!("Failed to load asset libraries: {e}");
                 }
             }
+            assets_ctx.request_repaint();
         };
 
         #[cfg(target_arch = "wasm32")]
@@ -432,12 +447,19 @@ impl FECharacterCreator {
         let button_size = Vec2::splat(button_size_val);
 
         let spacing = ui.spacing().item_spacing.y;
-        let label_height = 20.0;
+        let show_tags = self.filters_expanded
+            && library
+                .values()
+                .any(|asset| !asset.categories.is_empty() || !asset.contributors.is_empty());
+        let label_height = if show_tags { 40.0 } else { 20.0 };
         let total_item_size = vec2(button_size.x, button_size.y + spacing + label_height);
 
-        for asset in library.iter().filter(|asset| {
-            search_query.is_empty() || asset.1.name.to_lowercase().contains(search_query)
-        }) {
+        let asset_filter = self.asset_filter.clone();
+        let mut tag_clicks = Vec::new();
+        for asset in library
+            .iter()
+            .filter(|(_, asset)| asset_matches(&asset_filter, search_query, asset))
+        {
             let (rect, response) = ui.allocate_at_least(total_item_size, egui::Sense::click());
 
             if ui.is_rect_visible(rect) {
@@ -502,7 +524,15 @@ impl FECharacterCreator {
                         if button_response.clicked() {
                             clicked_asset = Some(asset.1.clone());
                         }
-                        ui.label(asset.1.name.clone());
+                        if show_tags {
+                            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(&asset.1.name);
+                                tag_clicks.extend(asset_tablets(ui, asset.1, &asset_filter));
+                            });
+                        } else {
+                            ui.label(&asset.1.name);
+                        }
                     });
                 });
             } else {
@@ -516,6 +546,16 @@ impl FECharacterCreator {
                 if selected && (self.randomise_used || self.new_active_tab) {
                     response.scroll_to_me(Some(Align::TOP));
                 }
+            }
+        }
+
+        for (kind, choice) in tag_clicks {
+            let chosen = match kind {
+                TagKind::Category => &mut self.asset_filter.categories,
+                TagKind::Artist => &mut self.asset_filter.contributors,
+            };
+            if !chosen.remove(&choice) {
+                chosen.insert(choice);
             }
         }
         clicked_asset
@@ -1102,6 +1142,39 @@ fn find_max_canvas_sizes(
             orientation: Orientation::Vertical,
         }
     }
+}
+
+/// Shows clickable tags for an asset's categories and artists.
+///
+/// Returns the tags that were clicked, so they can be toggled in the filter.
+fn asset_tablets(ui: &mut Ui, asset: &Asset, filter: &AssetFilter) -> Vec<(TagKind, TagChoice)> {
+    ui.spacing_mut().button_padding = vec2(3.0, 0.0);
+    ui.spacing_mut().item_spacing.x = 3.0;
+    ui.spacing_mut().interact_size.y = 14.0;
+    ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
+
+    let mut clicked = Vec::new();
+    for (kind, tags, chosen) in [
+        (TagKind::Category, &asset.categories, &filter.categories),
+        (TagKind::Artist, &asset.contributors, &filter.contributors),
+    ] {
+        for tag in tags {
+            let choice = TagChoice::tag(tag);
+            if ui
+                .tag_label(kind, chosen.contains(&choice), tag.as_str())
+                .clicked()
+            {
+                clicked.push((kind, choice));
+            }
+        }
+    }
+    clicked
+}
+
+/// Checks whether an asset matches the filter and the search query.
+pub(crate) fn asset_matches(filter: &AssetFilter, search_query: &str, asset: &Asset) -> bool {
+    filter.matches(asset)
+        && (search_query.is_empty() || asset.name.to_lowercase().contains(search_query))
 }
 
 #[cfg(test)]

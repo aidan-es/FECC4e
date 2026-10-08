@@ -68,6 +68,12 @@ fn add_asset_to_library(
     match Asset::try_from(path.as_path()) {
         Ok(asset) => {
             if let Some(library) = asset_libraries.get_mut(&asset.asset_type) {
+                if let Some(existing) = library.get(&asset.id) {
+                    log::warn!(
+                        "{path:?} has the same name as {:?} once tags are removed, so it replaces it",
+                        existing.path
+                    );
+                }
                 library.insert(asset.id.clone(), asset);
             }
         }
@@ -162,8 +168,14 @@ pub async fn load_image_bytes(path: &Path) -> Result<Vec<u8>, Box<dyn Error + Se
 /// Asynchronously loads the raw bytes of an image file (WASM version).
 #[cfg(target_arch = "wasm32")]
 pub async fn load_image_bytes(path: &Path) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
-    let url = path.to_str().ok_or("Invalid path")?;
-    let bytes_val = wasm::fetch_image_bytes(url)
+    let path = path.to_str().ok_or("Invalid path")?;
+    // Encode each part of the path, as file names may contain tags such as `{Iscaneus}`
+    let url = path
+        .split('/')
+        .map(|part| String::from(js_sys::encode_uri_component(part)))
+        .collect::<Vec<_>>()
+        .join("/");
+    let bytes_val = wasm::fetch_image_bytes(&url)
         .await
         .map_err(|e| e.as_string().unwrap_or_else(|| "JS error".to_string()))?;
     let bytes: Vec<u8> = js_sys::Uint8Array::new(&bytes_val).to_vec();
@@ -357,6 +369,23 @@ mod tests {
                 asset.id.as_str()
             })
         })
+    }
+
+    #[test]
+    fn test_repository_art_names_are_unique_without_tags() {
+        let art_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../art");
+        let files = std::fs::read_dir(&art_dir)
+            .unwrap()
+            .filter(|entry| {
+                let path = entry.as_ref().unwrap().path();
+                path.extension().is_some_and(|extension| extension == "png")
+            })
+            .count();
+        let assets: usize = repository_art_libraries().values().map(IndexMap::len).sum();
+        assert_eq!(
+            assets, files,
+            "Two art files have the same name once tags are removed."
+        );
     }
 
     #[test]
