@@ -1,5 +1,5 @@
 [build]
-filehash = false
+filehash = true
 
 [watch]
 watch = ["style.css", "../art/ART.md"]
