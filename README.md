@@ -6,7 +6,9 @@ A cross-platform desktop and web application for creating custom character portr
 series.
 
 This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by
-[TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scarla by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc) - these being considered the
+[TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated
+by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and
+converted to Scala by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc) - these being considered the
 1st, 2nd, and 3rd 'versions' or 'editions' respectively. I use the word 'edition' instead, in the hope of myself
 iterating with improvements and new features in future versions.
 
@@ -74,20 +76,32 @@ To build and run the application locally, you will need to have the Rust program
     cargo install trunk
     ```
 
-3  **Build and run:**
--    **Native:**
-        ```bash
-        cargo run --release
-        ```
--   **Web:**
-       ```bash
-       trunk serve --open --release
-       ```
+3. **Build and run:**
+
+- **Native:**
+  ```bash
+  cargo run --release
+  ```
+- **Web (via `cargo-make` from root):**
+  ```bash
+  cargo make serve
+  ```
+- **Web (direct Trunk CLI):**
+  ```bash
+  cd fecc_gui
+  trunk serve --open --release
+  ```
 
 Automatic builds and tests can be run using the `cargo-make` crate and running:
 
 ```bash
 cargo make check
+```
+
+To enable the repository's git hook(s), which catch art renames that git misses on Windows, run:
+
+```bash
+git config core.hooksPath .githooks
 ```
 
 ### Contributing

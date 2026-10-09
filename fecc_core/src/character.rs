@@ -1,10 +1,12 @@
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
 use crate::asset::{Asset, AssetType};
+use crate::asset_aliases;
 use crate::character::Colourable::{
     Accessory, Cloth, EyeAndBeard, Hair, Leather, Metal, Skin, Trim,
 };
 use crate::extensions::rgba::AdjustBrightness as _;
 use crate::types::{Point, Rgba};
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use strum_macros::{Display, EnumIter};
 
@@ -114,6 +116,20 @@ pub struct CharacterPart {
     #[serde(default)]
     pub flipped: bool,
     pub asset: Asset,
+}
+
+impl CharacterPart {
+    fn normalise(&mut self, canvas_size: Point) {
+        self.position.x /= canvas_size.x;
+        self.position.y = 0.5 + (self.position.y - canvas_size.y / 2.0) / canvas_size.x;
+        self.scale /= canvas_size.x;
+    }
+
+    fn denormalise(&mut self, canvas_size: Point) {
+        self.position.x *= canvas_size.x;
+        self.position.y = canvas_size.y / 2.0 + (self.position.y - 0.5) * canvas_size.x;
+        self.scale *= canvas_size.x;
+    }
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone, Default)]
@@ -250,7 +266,7 @@ impl Default for Character {
                 ),
                 (
                     Accessory,
-                    CharacterPartColours::new(&Rgba::new(0, 0, 0, 255)),
+                    CharacterPartColours::new(&Rgba::new(247, 173, 82, 255)),
                 ),
             ]
             .into_iter()
@@ -293,6 +309,63 @@ impl Character {
             AssetType::Token => self.token = None,
         }
     }
+
+    /// Converts the parts from canvas pixels to the units saved in files.
+    ///
+    /// Both axes use the canvas width as their unit, measured from the centre at (0.5, 0.5), so the
+    /// layers stay lined up on a canvas of another shape. On a square canvas a position is the
+    /// fraction of the canvas width and height.
+    pub fn normalise(&mut self, portrait_size: Point, token_size: Point) {
+        self.for_each_part_on_canvas(portrait_size, token_size, CharacterPart::normalise);
+    }
+
+    /// Converts the parts from the units saved in files to canvas pixels.
+    pub fn denormalise(&mut self, portrait_size: Point, token_size: Point) {
+        self.for_each_part_on_canvas(portrait_size, token_size, CharacterPart::denormalise);
+    }
+
+    /// Applies `f` to each part with the size of its canvas, skipping a canvas not laid out yet.
+    fn for_each_part_on_canvas(
+        &mut self,
+        portrait_size: Point,
+        token_size: Point,
+        f: fn(&mut CharacterPart, Point),
+    ) {
+        for (canvas_size, part) in [
+            (portrait_size, &mut self.armour),
+            (portrait_size, &mut self.face),
+            (portrait_size, &mut self.hair),
+            (portrait_size, &mut self.hair_back),
+            (portrait_size, &mut self.accessory),
+            (token_size, &mut self.token),
+        ] {
+            if canvas_size.x > 0.0
+                && canvas_size.y > 0.0
+                && let Some(part) = part
+            {
+                f(part, canvas_size);
+            }
+        }
+    }
+
+    pub fn relink_assets(&mut self, asset_libraries: &HashMap<AssetType, IndexMap<String, Asset>>) {
+        for (asset_type, part) in [
+            (AssetType::Armour, &mut self.armour),
+            (AssetType::Face, &mut self.face),
+            (AssetType::Hair, &mut self.hair),
+            (AssetType::HairBack, &mut self.hair_back),
+            (AssetType::Accessory, &mut self.accessory),
+            (AssetType::Token, &mut self.token),
+        ] {
+            if let Some(part) = part
+                && let Some(asset) = asset_libraries
+                    .get(&asset_type)
+                    .and_then(|library| asset_aliases::resolve(library, &part.asset.id))
+            {
+                part.asset = asset.clone();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -300,6 +373,72 @@ mod tests {
     use super::*;
     use crate::asset::{Asset, AssetType};
     use crate::types::Rgba;
+
+    fn part_at(x: f32, y: f32, scale: f32) -> CharacterPart {
+        let asset = Asset::new(
+            "Test".to_owned(),
+            "art/Test_Face.png".into(),
+            None,
+            AssetType::Face,
+        );
+        CharacterPart {
+            position: Point::new(x, y),
+            scale,
+            rotation: 0.0,
+            flipped: false,
+            asset,
+        }
+    }
+
+    #[test]
+    fn test_normalise_square_canvas_gives_fractions() {
+        // Saves from square canvases are read the same as before non-square canvases existed.
+        let mut character = Character {
+            face: Some(part_at(30.0, 60.0, 3.0)),
+            ..Default::default()
+        };
+        character.normalise(Point::new(96.0, 96.0), Point::new(64.0, 64.0));
+
+        let face = character.face.unwrap();
+        assert!((face.position.x - 30.0 / 96.0).abs() < 1e-6);
+        assert!((face.position.y - 60.0 / 96.0).abs() < 1e-6);
+        assert!((face.scale - 3.0 / 96.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_normalise_round_trips_on_non_square_canvas() {
+        let canvas = Point::new(96.0, 80.0);
+        let mut character = Character {
+            face: Some(part_at(30.0, 60.0, 3.0)),
+            ..Default::default()
+        };
+        character.normalise(canvas, Point::new(64.0, 64.0));
+        character.denormalise(canvas, Point::new(64.0, 64.0));
+
+        let face = character.face.unwrap();
+        assert!((face.position.x - 30.0).abs() < 1e-4);
+        assert!((face.position.y - 60.0).abs() < 1e-4);
+        assert!((face.scale - 3.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_denormalise_keeps_layers_lined_up_on_another_shape() {
+        // Hair 24 art pixels left of and above the face, saved from a 96x96 canvas.
+        let mut character = Character {
+            face: Some(part_at(0.5, 0.5, 1.0 / 96.0)),
+            hair: Some(part_at(0.25, 0.25, 1.0 / 96.0)),
+            ..Default::default()
+        };
+        character.denormalise(Point::new(120.0, 100.0), Point::new(64.0, 64.0));
+
+        let face = character.face.unwrap();
+        let hair = character.hair.unwrap();
+        let art_offset_x = (face.position.x - hair.position.x) / face.scale;
+        let art_offset_y = (face.position.y - hair.position.y) / face.scale;
+        assert!((art_offset_x - 24.0).abs() < 1e-4);
+        assert!((art_offset_y - 24.0).abs() < 1e-4);
+        assert!((face.position.y - 50.0).abs() < 1e-4, "stays centred");
+    }
 
     #[test]
     fn test_colour_palette_cyclic() {
@@ -356,7 +495,6 @@ mod tests {
 
         assert_eq!(colours.base, new_base);
         assert_ne!(colours.base, initial_base);
-        // Verify derived colors updated
         assert_ne!(colours.lighter, initial_base.brighter());
         assert_eq!(colours.lighter, new_base.brighter());
     }

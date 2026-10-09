@@ -1,11 +1,11 @@
-use crate::app::{Corner, Interaction};
-use crate::extensions::color32::Contrast as _;
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
 use crate::FECharacterCreator;
+use crate::app::{Corner, Interaction};
+use crate::extensions::color32::Contrast as _;
+use ahash::HashMap;
 use eframe::emath::{Pos2, Rect, Rot2, Vec2, pos2, vec2};
 use eframe::epaint::{Color32, Stroke};
 use egui::Order::Background;
-use egui::ahash::HashMap;
 use egui::{Context, Id, LayerId, Painter, Response, Ui};
 use fecc_core::asset::AssetType;
 use fecc_core::character::CharacterPart;
@@ -100,8 +100,8 @@ impl FECharacterCreator {
             canvas_rect,
         );
 
-        let handle_stroke = Stroke::new(1.0, Color32::WHITE);
-        let line_stroke = Stroke::new(1.0, Color32::from_gray(190));
+        let handle_stroke = Stroke::new(1.0_f32, Color32::WHITE);
+        let line_stroke = Stroke::new(1.0_f32, Color32::from_gray(190));
         painter.line_segment([corners_abs[0], corners_abs[1]], line_stroke);
         painter.line_segment([corners_abs[1], corners_abs[2]], line_stroke);
         painter.line_segment([corners_abs[2], corners_abs[3]], line_stroke);

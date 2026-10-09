@@ -1,21 +1,24 @@
-use crate::extensions::color32::Contrast as _;
-use crate::extensions::toggle_switch::toggle;
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+use super::{CanvasType, asset_matches};
 use crate::FECharacterCreator;
+use crate::extensions::color32::Contrast as _;
+use crate::extensions::tag_label::{TagKind, TagLabel as _};
+use crate::extensions::toggle_switch::toggle;
+use ahash::HashSet;
 use eframe::emath::vec2;
 use eframe::epaint::{Color32, Stroke};
-use egui::ahash::HashSet;
 use egui::{Button, Context, Image, RichText, Ui};
 use egui_commonmark::CommonMarkViewer;
-use egui_extras::install_image_loaders;
 use egui_extras::{Column, TableBuilder};
-use fecc_core::asset::AssetType;
+use fecc_core::asset::{Asset, AssetType};
+use fecc_core::asset_tags::{AvailableTags, TagChoice, category_title};
 use fecc_core::character::Colourable::Skin;
 use fecc_core::character::{CharacterPartColours, Colourable, Shade};
 use fecc_core::export::{ExportSize, export_character};
 use fecc_core::random::{randomize_assets, randomize_colours};
 use fecc_core::types::Rgba;
 use image::RgbaImage;
+use std::collections::BTreeSet;
 use strum::IntoEnumIterator as _;
 
 // Helper functions for colour conversion
@@ -28,7 +31,12 @@ fn from_c32(c: Color32) -> Rgba {
 }
 
 impl eframe::App for FECharacterCreator {
-    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, whole_app_ui: &mut Ui, _frame: &mut eframe::Frame) {
+        let ctx = whole_app_ui.ctx().clone();
+        // Receive background loads every frame, regardless of which panels are open
+        self.update_stored_colour_palettes();
+        self.update_stored_asset_libraries(&ctx);
+        self.update_stored_image_data_cache();
         {
             let mut character = self.character.clone();
             let asset_libraries = &self.asset_libraries;
@@ -58,13 +66,14 @@ impl eframe::App for FECharacterCreator {
 
         #[cfg(target_arch = "wasm32")]
         if let Some(mut rx) = self.new_user_asset_receiver.take() {
-            if let Ok(Some(result)) = rx.try_next() {
+            if let Ok(result) = rx.try_recv() {
                 match result {
                     Ok(asset) => {
                         self.asset_libraries
                             .entry(asset.asset_type)
                             .or_default()
                             .insert(asset.id.clone(), asset);
+                        self.refresh_available_tags();
                         self.add_art_error = None;
                         self.toasts.success("Successfully added art.");
                     }
@@ -100,9 +109,9 @@ impl eframe::App for FECharacterCreator {
             self.loaded_character_receiver = Some(rx);
         }
 
-        egui::TopBottomPanel::top("top_toggle_bar")
+        egui::Panel::top("top_toggle_bar")
             .resizable(false)
-            .show(ctx, |ui| {
+            .show(whole_app_ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
                     let asset_panel_icon = if self.assets_panel_expanded {
                         "◀"
@@ -170,9 +179,10 @@ impl eframe::App for FECharacterCreator {
                 });
             });
 
-        egui::SidePanel::left("part_selection_panel").show_animated(
-            ctx,
-            self.assets_panel_expanded,
+        let mut assets_panel_expanded = self.assets_panel_expanded;
+        egui::Panel::left("part_selection_panel").show_collapsible(
+            whole_app_ui,
+            &mut assets_panel_expanded,
             |ui| {
                 ui.heading("Character Parts");
                 ui.separator();
@@ -190,21 +200,31 @@ impl eframe::App for FECharacterCreator {
                     if ui.add(Button::new("Randomise")).clicked() {
                         self.randomise_used = true;
 
-                        let types_to_randomize: Vec<AssetType> =
-                            AssetType::get_selectable_part_types()
-                                .filter(|asset_type| asset_type != &AssetType::Accessory)
-                                .collect();
+                        let portrait_types: Vec<AssetType> = AssetType::get_selectable_part_types()
+                            .filter(|asset_type| {
+                                asset_type != &AssetType::Accessory
+                                    && asset_type != &AssetType::Token
+                            })
+                            .collect();
 
-                        let canvas_size = fecc_core::types::Point::new(
-                            self.portrait_rect.width(),
-                            self.portrait_rect.height(),
-                        );
+                        let portrait_canvas_size = self.canvas_size(CanvasType::Portrait);
 
                         randomize_assets(
                             &mut self.character,
                             &self.asset_libraries,
-                            &types_to_randomize,
-                            canvas_size,
+                            &portrait_types,
+                            portrait_canvas_size,
+                            &self.asset_filter,
+                        );
+
+                        let token_canvas_size = self.canvas_size(CanvasType::Token);
+
+                        randomize_assets(
+                            &mut self.character,
+                            &self.asset_libraries,
+                            &[AssetType::Token],
+                            token_canvas_size,
+                            &self.asset_filter,
                         );
 
                         if self.randomise_colours_too {
@@ -225,14 +245,31 @@ impl eframe::App for FECharacterCreator {
                 });
                 ui.separator();
 
-                let search_query = self.search_queries.entry(self.active_tab).or_default();
+                self.asset_filter_ui(ui);
+
                 ui.horizontal(|ui| {
                     ui.label("Search:");
-                    ui.text_edit_singleline(search_query);
+                    ui.text_edit_singleline(&mut self.search_query);
                 });
+                let search_query_cleaned = self.search_query.to_lowercase();
+                let library = self
+                    .asset_libraries
+                    .get(&self.active_tab)
+                    .cloned()
+                    .unwrap_or_default();
+                let shown_assets: Vec<&Asset> = library
+                    .values()
+                    .filter(|asset| asset_matches(&self.asset_filter, &search_query_cleaned, asset))
+                    .collect();
+                ui.label(
+                    RichText::new(format!(
+                        "Showing {} of {}",
+                        shown_assets.len(),
+                        library.len()
+                    ))
+                    .weak(),
+                );
                 ui.separator();
-
-                let search_query_cleaned = search_query.to_lowercase();
 
                 if ui
                     .add(Button::new(
@@ -242,52 +279,52 @@ impl eframe::App for FECharacterCreator {
                 {
                     self.randomise_used = true;
                     let asset_type = self.active_tab;
-                    let canvas_size = if asset_type == AssetType::Token {
-                        fecc_core::types::Point::new(
-                            self.token_rect.width(),
-                            self.token_rect.height(),
-                        )
+                    let canvas_size = self.canvas_size(if asset_type == AssetType::Token {
+                        CanvasType::Token
                     } else {
-                        fecc_core::types::Point::new(
-                            self.portrait_rect.width(),
-                            self.portrait_rect.height(),
-                        )
-                    };
+                        CanvasType::Portrait
+                    });
 
                     randomize_assets(
                         &mut self.character,
                         &self.asset_libraries,
                         &[asset_type],
                         canvas_size,
+                        &self.asset_filter,
                     );
                     self.character_needs_asset_refresh = true;
                 }
 
+                ui.separator();
+
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let asset_type = self.active_tab;
 
-                    if let Some(library) = self.asset_libraries.get(&asset_type)
-                        && let Some(asset) =
-                            self.display_assets(ctx, ui, &library.clone(), &search_query_cleaned)
-                    {
-                        self.select_asset(&asset.clone(), asset_type);
+                    if let Some(asset) = self.display_assets(&ctx, ui, &library, &shown_assets) {
+                        self.select_asset(&asset, asset_type);
+                    }
+
+                    if shown_assets.is_empty() && !library.is_empty() {
+                        ui.label("Nothing matches the filter and search.");
+                        if ui.button("Show everything").clicked() {
+                            self.asset_filter = Default::default();
+                            self.search_query.clear();
+                        }
                     }
                 });
             },
         );
+        self.assets_panel_expanded = assets_panel_expanded;
 
         #[cfg(target_arch = "wasm32")]
-        self.add_art_window(ctx);
+        self.add_art_window(whole_app_ui.ctx());
 
-        self.show_about_window(ctx);
+        self.show_about_window(whole_app_ui.ctx());
 
-        egui::SidePanel::right("colour_selection")
-            .default_width(0.0)
-            .show_animated(ctx, self.colour_panel_expanded, |ui| {
-                self.update_stored_colour_palettes();
-                self.update_stored_asset_libraries(ctx, ui);
-                self.update_stored_image_data_cache();
-
+        let mut colour_panel_expanded = self.colour_panel_expanded;
+        egui::Panel::right("colour_selection")
+            .default_size(0.0)
+            .show_collapsible(whole_app_ui, &mut colour_panel_expanded, |ui| {
                 ui.add_space(5.0);
 
                 if ui.button("Randomise Colours").clicked() {
@@ -300,7 +337,7 @@ impl eframe::App for FECharacterCreator {
                     inner_margin: egui::Margin::same(2),
                     outer_margin: egui::Margin::same(3),
                     shadow: Default::default(),
-                    stroke: Stroke::new(1.0, Color32::GRAY),
+                    stroke: Stroke::new(1.0_f32, Color32::GRAY),
                     ..Default::default()
                 };
 
@@ -328,7 +365,7 @@ impl eframe::App for FECharacterCreator {
                             ui.horizontal(|ui| {
                                 let button = Button::new(button_text)
                                     .fill(base_colour_c32)
-                                    .stroke(Stroke::new(1.0, Color32::GRAY))
+                                    .stroke(Stroke::new(1.0_f32, Color32::GRAY))
                                     .min_size(vec2(100.0, 20.0));
 
                                 if ui.add(button).clicked() {
@@ -339,7 +376,6 @@ impl eframe::App for FECharacterCreator {
                                 }
 
                                 if self.colour_palettes.contains_key(&colourable) {
-                                    install_image_loaders(ctx);
                                     let cycle_colours_symbol = Image::new(egui::include_image!(
                                         "../../../assets/coins-swap.svg"
                                     ));
@@ -396,7 +432,7 @@ impl eframe::App for FECharacterCreator {
                                         ui.horizontal(|ui| {
                                             let button = Button::new("")
                                                 .fill(colour_c32)
-                                                .stroke(Stroke::new(1.0, Color32::GRAY))
+                                                .stroke(Stroke::new(1.0_f32, Color32::GRAY))
                                                 .min_size(vec2(40.0, 20.0));
 
                                             if ui.add(button).clicked() {
@@ -409,7 +445,7 @@ impl eframe::App for FECharacterCreator {
                                     }
 
                                     if self.colour_picker_open_state[&(colourable, shade)] {
-                                        self.present_colour_picker(ctx, colourable, shade);
+                                        self.present_colour_picker(ui.ctx(), colourable, shade);
                                     }
                                 }
                             });
@@ -432,7 +468,7 @@ impl eframe::App for FECharacterCreator {
 
                     let button = Button::new(button_text)
                         .fill(outline_c32)
-                        .stroke(Stroke::new(1.0, Color32::GRAY))
+                        .stroke(Stroke::new(1.0_f32, Color32::GRAY))
                         .min_size(vec2(135.0, 20.0));
 
                     if ui.add(button).clicked() {
@@ -445,7 +481,7 @@ impl eframe::App for FECharacterCreator {
                                 .get_mut(&self.active_tab)
                                 .expect("Missing active_tab entry in outline_picker_open_state"),
                         )
-                        .show(ctx, |ui| {
+                        .show(ui.ctx(), |ui| {
                             ui.label(
                                 "Select a new ".to_owned()
                                     + &*self.active_tab.to_string()
@@ -537,10 +573,12 @@ impl eframe::App for FECharacterCreator {
                     ui.label("Made with love and cats.");
                 });
             });
+        self.colour_panel_expanded = colour_panel_expanded;
 
-        egui::TopBottomPanel::bottom("export").show_animated(
-            ctx,
-            self.export_panel_expanded,
+        let mut export_panel_expanded = self.export_panel_expanded;
+        egui::Panel::bottom("export").show_collapsible(
+            whole_app_ui,
+            &mut export_panel_expanded,
             |ui| {
                 ui.heading("Export");
 
@@ -573,9 +611,61 @@ impl eframe::App for FECharacterCreator {
                                 &mut self.export_size_selection,
                                 ExportSize::ROMHack,
                                 ExportSize::ROMHack.display_name(),
-                            )
+                            );
+                            let is_custom =
+                                matches!(self.export_size_selection, ExportSize::Custom { .. });
+                            let custom_val = ExportSize::Custom {
+                                portrait: (self.custom_portrait_width, self.custom_portrait_height),
+                                token: (self.custom_token_width, self.custom_token_height),
+                            };
+                            if ui
+                                .selectable_label(is_custom, custom_val.display_name())
+                                .clicked()
+                            {
+                                self.export_size_selection = custom_val;
+                            }
                         });
                 });
+
+                if matches!(self.export_size_selection, ExportSize::Custom { .. }) {
+                    let mut changed = false;
+                    ui.horizontal(|ui| {
+                        ui.label("Portrait Size:");
+                        ui.label("W:");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.custom_portrait_width)
+                                    .range(1..=4096),
+                            )
+                            .changed();
+                        ui.label("H:");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.custom_portrait_height)
+                                    .range(1..=4096),
+                            )
+                            .changed();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Token Size:");
+                        ui.label("W:");
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut self.custom_token_width).range(1..=4096))
+                            .changed();
+                        ui.label("H:");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.custom_token_height).range(1..=4096),
+                            )
+                            .changed();
+                    });
+                    if changed {
+                        self.export_size_selection = ExportSize::Custom {
+                            portrait: (self.custom_portrait_width, self.custom_portrait_height),
+                            token: (self.custom_token_width, self.custom_token_height),
+                        };
+                    }
+                }
 
                 ui.separator();
 
@@ -632,10 +722,12 @@ impl eframe::App for FECharacterCreator {
                 }
             },
         );
+        self.export_panel_expanded = export_panel_expanded;
 
-        egui::TopBottomPanel::bottom("save_load").show_animated(
-            ctx,
-            self.save_load_panel_expanded,
+        let mut save_load_panel_expanded = self.save_load_panel_expanded;
+        egui::Panel::bottom("save_load").show_collapsible(
+            whole_app_ui,
+            &mut save_load_panel_expanded,
             |ui| {
                 ui.heading("Save / Load");
                 ui.horizontal(|ui| {
@@ -654,14 +746,15 @@ impl eframe::App for FECharacterCreator {
                 }
             },
         );
+        self.save_load_panel_expanded = save_load_panel_expanded;
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.update_rect(ctx, ui);
+        egui::CentralPanel::default().show(whole_app_ui, |ui| {
+            self.update_rect(&ctx, ui);
         });
 
         self.new_active_tab = false;
         self.randomise_used = false;
-        self.toasts.show(ctx);
+        self.toasts.show(&ctx);
         #[cfg(target_arch = "wasm32")]
         {
             self.add_art_error = None;
@@ -734,7 +827,7 @@ Licensed under the [GNU AGPLv3](https://www.gnu.org/licenses/agpl-3.0.html) - ex
 ### Credits
 Built with [Rust](https://www.rust-lang.org/) and [egui](https://github.com/emilk/egui).
 
-This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by [TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scarla by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc).
+This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by [TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scala by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc).
 
 Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
 "#
@@ -770,27 +863,15 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
         }
     }
 
-    fn update_stored_asset_libraries(&mut self, ctx: &Context, _ui: &mut Ui) {
+    fn update_stored_asset_libraries(&mut self, ctx: &Context) {
         if let Some(mut rx) = self.asset_libraries_receiver.take() {
             match rx.try_recv() {
                 Ok(Some(libs)) => {
                     self.asset_libraries = libs;
+                    self.refresh_available_tags();
 
                     if self.character_needs_asset_refresh {
-                        for asset_type in AssetType::iter() {
-                            if let Some(part) = self.character.get_character_part(&asset_type)
-                                && let Some(asset_from_lib) = self
-                                    .asset_libraries
-                                    .get(&asset_type)
-                                    .and_then(|lib| lib.get(&part.asset.id))
-                            {
-                                let new_part = fecc_core::character::CharacterPart {
-                                    asset: asset_from_lib.clone(),
-                                    ..part
-                                };
-                                self.character.set_character_part(&asset_type, new_part);
-                            }
-                        }
+                        self.character.relink_assets(&self.asset_libraries);
                         self.character_needs_asset_refresh = false;
 
                         // Also trigger image loading
@@ -977,5 +1058,145 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
         }
 
         Ok((unique_colours.len(), has_semi_transparency))
+    }
+}
+
+impl FECharacterCreator {
+    /// Collects the tags used by the selectable assets, for the filter rows.
+    ///
+    /// Call this whenever the asset libraries change.
+    fn refresh_available_tags(&mut self) {
+        self.available_tags = AvailableTags::from_assets(
+            AssetType::get_selectable_part_types()
+                .filter_map(|asset_type| self.asset_libraries.get(&asset_type))
+                .flat_map(|library| library.values()),
+        );
+    }
+
+    /// Shows the collapsible game and artist filters.
+    ///
+    /// Each row is only shown if some art has that kind of tag.
+    fn asset_filter_ui(&mut self, ui: &mut Ui) {
+        let available = &self.available_tags;
+        if available.categories.is_empty() && available.contributors.is_empty() {
+            return;
+        }
+
+        let active = self.asset_filter.categories.len() + self.asset_filter.contributors.len();
+        let title = if active == 0 {
+            "Filters".to_owned()
+        } else {
+            format!("Filters ({active} active)")
+        };
+        let header = egui::CollapsingHeader::new(title)
+            .id_salt("asset_filters")
+            .open(Some(self.filters_expanded))
+            .show(ui, |ui| {
+                if !available.categories.is_empty() {
+                    let chips = available
+                        .categories
+                        .iter()
+                        .map(|category| {
+                            let hover = category_title(category);
+                            (TagChoice::tag(category), category.clone(), hover)
+                        })
+                        .chain(available.any_uncategorised.then(|| {
+                            (
+                                TagChoice::Untagged,
+                                "Uncategorised".to_owned(),
+                                Some("Art without a game or other category".to_owned()),
+                            )
+                        }));
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Game:");
+                        chip_row(
+                            ui,
+                            &mut self.asset_filter.categories,
+                            chips,
+                            TagKind::Category,
+                        );
+                    });
+                }
+
+                if !available.contributors.is_empty() {
+                    let chips = available
+                        .contributors
+                        .iter()
+                        .map(|artist| (TagChoice::tag(artist), artist.clone(), None))
+                        .chain(available.any_without_contributor.then(|| {
+                            (
+                                TagChoice::Untagged,
+                                "Uncredited".to_owned(),
+                                Some("Art without a credited artist".to_owned()),
+                            )
+                        }));
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Artist:");
+                        chip_row(
+                            ui,
+                            &mut self.asset_filter.contributors,
+                            chips,
+                            TagKind::Artist,
+                        );
+                    });
+                }
+            });
+        if header.header_response.clicked() {
+            self.filters_expanded = !self.filters_expanded;
+        }
+        ui.separator();
+    }
+}
+
+/// Shows an "All" chip followed by a chip for each choice.
+///
+/// Clicking a chip toggles it, and clicking "All" clears the row.
+fn chip_row(
+    ui: &mut Ui,
+    chosen: &mut BTreeSet<TagChoice>,
+    chips: impl Iterator<Item = (TagChoice, String, Option<String>)>,
+    kind: TagKind,
+) {
+    if ui.tag_plain_label(kind, chosen.is_empty(), "All").clicked() {
+        chosen.clear();
+    }
+    for (choice, label, hover) in chips {
+        let selected = chosen.contains(&choice);
+        let mut response = if choice == TagChoice::Untagged {
+            ui.tag_plain_label(kind, selected, label.as_str())
+        } else {
+            ui.tag_label(kind, selected, label.as_str())
+        };
+        if let Some(hover) = hover {
+            response = response.on_hover_text(hover);
+        } else if kind == TagKind::Artist
+            && let Some((name, link)) = artist_info(&label)
+        {
+            response = response.on_hover_ui(|ui| {
+                ui.label(name);
+                if let Some(link) = link {
+                    ui.hyperlink(link);
+                }
+            });
+        }
+        if response.clicked() {
+            if selected {
+                chosen.remove(&choice);
+            } else {
+                chosen.insert(choice);
+            }
+        }
+    }
+}
+
+/// Returns an artist's full credit if known.
+fn artist_info(artist: &str) -> Option<(&'static str, Option<&'static str>)> {
+    match artist.to_lowercase().as_str() {
+        "is" => Some((
+            "Intelligent Systems, the developer of the Fire Emblem series",
+            None,
+        )),
+        "iscaneus" => Some(("Iscaneus", Some("https://www.deviantart.com/iscaneus"))),
+        _ => None,
     }
 }

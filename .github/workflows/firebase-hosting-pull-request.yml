@@ -10,33 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          target: wasm32-unknown-unknown
-
-      - name: Cache cargo-installed binaries
-        id: cache-cargo-bins
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/
-          key: cargo-bins-${{ runner.os }}-wb-0.2.105-trunk
-          restore-keys: |
-            cargo-bins-${{ runner.os }}-
+        run: rustup toolchain install
 
       - name: Cache Rust dependencies (Project)
         uses: swatinem/rust-cache@v2
 
-      - name: Install wasm-bindgen-cli
-        if: steps.cache-cargo-bins.outputs.cache-hit != 'true'
-        run: cargo install wasm-bindgen-cli --version 0.2.105
-
       - name: Install Trunk
-        if: steps.cache-cargo-bins.outputs.cache-hit != 'true'
-        run: cargo install trunk
+        uses: ./.github/actions/install-trunk
 
       - name: Build with Trunk
         working-directory: fecc_gui
