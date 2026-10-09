@@ -10,21 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          target: wasm32-unknown-unknown
+        run: rustup toolchain install
 
       - name: Cache Rust dependencies (Project)
         uses: swatinem/rust-cache@v2
 
       - name: Install Trunk
-        uses: jetli/trunk-action@v0.4.0
-        with:
-          version: 'v0.21.14' # If changed, update CI and firebase merge also
+        uses: ./.github/actions/install-trunk
 
       - name: Build with Trunk
         working-directory: fecc_gui
