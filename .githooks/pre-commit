@@ -1,0 +1,13 @@
+#!/bin/bash
+# Windows ignores case, so git misses renames that only change capitalisation.
+# Lists art git spells differently to the disk, skipping deleted files.
+export LC_ALL=C
+mismatched=$(comm -23 <(git -c core.quotePath=false ls-files art | sort) <(ls -d art/* | sort) |
+    while IFS= read -r path; do [ -e "$path" ] && echo "$path"; done)
+
+if [ -n "$mismatched" ]; then
+    echo "Capitalisation in git differs from art/ for:"
+    echo "$mismatched"
+    echo "Record each rename with: git mv -f old new"
+    exit 1
+fi

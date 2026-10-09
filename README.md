@@ -98,6 +98,12 @@ Automatic builds and tests can be run using the `cargo-make` crate and running:
 cargo make check
 ```
 
+To enable the repository's git hook(s), which catch art renames that git misses on Windows, run:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ### Contributing
 
 Contributions are most welcome. Please feel free to open an issue, submit a pull request or contact me by email - hi@ the FECC domain listed above.
