@@ -16,25 +16,13 @@ jobs:
           toolchain: stable
           target: wasm32-unknown-unknown
 
-      - name: Cache cargo-installed binaries
-        id: cache-cargo-bins
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/
-          key: cargo-bins-${{ runner.os }}-wb-0.2.105-trunk
-          restore-keys: |
-            cargo-bins-${{ runner.os }}-
-
       - name: Cache Rust dependencies (Project)
         uses: swatinem/rust-cache@v2
 
-      - name: Install wasm-bindgen-cli
-        if: steps.cache-cargo-bins.outputs.cache-hit != 'true'
-        run: cargo install wasm-bindgen-cli --version 0.2.105
-
       - name: Install Trunk
-        if: steps.cache-cargo-bins.outputs.cache-hit != 'true'
-        run: cargo install trunk
+        uses: jetli/trunk-action@v0.4.0
+        with:
+          version: 'v0.21.14' # If changed, update CI and firebase pull request also
 
       - name: Build with Trunk
         working-directory: fecc_gui
