@@ -103,8 +103,7 @@ impl Asset {
     ///
     /// Other asset types have no back part.
     fn back_part_id(name: &str, asset_type: AssetType) -> Option<String> {
-        let name = parse_name(name).map_or_else(|_| name.to_owned(), |parsed| parsed.name);
-        (asset_type == AssetType::Hair).then(|| Self::make_id(&name, AssetType::HairBack))
+        (asset_type == AssetType::Hair).then(|| Self::make_id(name, AssetType::HairBack))
     }
 
     /// Parses a filename to extract the asset's name and type.
@@ -135,12 +134,12 @@ impl Asset {
     /// Creates an `Asset` from a filename and image bytes.
     pub fn try_from_bytes(filename: &str, bytes: &[u8]) -> Result<Self, String> {
         let (name, asset_type) = Self::parse_filename(filename.trim_end_matches(".png"))?;
-        let back_part_id = Self::back_part_id(name, asset_type);
 
         // Create a virtual path for the user asset
         let path = PathBuf::from(format!("user-asset://{filename}"));
 
-        let mut asset = Self::new(name.to_owned(), path, back_part_id, asset_type);
+        let mut asset = Self::new(name.to_owned(), path, None, asset_type);
+        asset.back_part = Self::back_part_id(&asset.name, asset_type);
 
         let image = image::load_from_memory(bytes)
             .map_err(|e| e.to_string())?
@@ -162,14 +161,11 @@ impl TryFrom<&Path> for Asset {
             .ok_or_else(|| "Invalid filename".to_owned())?;
 
         let (name, asset_type) = Self::parse_filename(filename)?;
-        let back_part_id = Self::back_part_id(name, asset_type);
 
-        Ok(Self::new(
-            name.to_owned(),
-            path.to_path_buf(),
-            back_part_id,
-            asset_type,
-        ))
+        let mut asset = Self::new(name.to_owned(), path.to_path_buf(), None, asset_type);
+        asset.back_part = Self::back_part_id(&asset.name, asset_type);
+
+        Ok(asset)
     }
 }
 
@@ -291,6 +287,7 @@ mod tests {
             "Style_Hair.png",
             "Style_HairBack.png",
             "Long_Style_Hair.png",
+            "Lyn[FE7]{Someone}_Hair.png",
             "Test_Face.png",
         ] {
             let from_bytes =

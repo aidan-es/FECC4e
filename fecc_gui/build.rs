@@ -21,11 +21,10 @@ fn main() {
                 && path.extension().and_then(|s| s.to_str()) == Some("png")
                 && let Some(file_name) = path.file_name().and_then(|s| s.to_str())
             {
-                if file_name.contains(['#', '?', '%']) {
-                    println!(
-                        "cargo:warning=art/{file_name} contains '#', '?' or '%', which can break loading it on the web"
-                    );
-                }
+                assert!(
+                    !file_name.contains(['#', '?', '%']),
+                    "art/{file_name} contains '#', '?' or '%', which can break loading it on the web"
+                );
                 files.push(file_name.to_owned());
             }
         }

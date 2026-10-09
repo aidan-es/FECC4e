@@ -37,46 +37,43 @@ pub fn decode_hex_colour(hex_str: &str) -> Result<Rgba, String> {
 /// Resolves an index from V3 into an `Asset`.
 ///
 /// Uses V3 asset list, following any art renamed since. A listed asset that is missing from the
-/// library gives no part. Fallback to alphabetically sorting our current assets (under the names V3
-/// knew them by) provides limited and experimental support for V3 saves that make use of a modded
-/// asset where that asset has also been added to 4E.
+/// library gives no part, as does an index past the end of the library. Fallback to alphabetically
+/// sorting our current assets (under the names V3 knew them by) provides limited and experimental
+/// support for V3 saves that make use of a modded asset where that asset has also been added to 4E.
 pub fn get_asset_by_index(
     asset_type: AssetType,
     index: usize,
     asset_libraries: &HashMap<AssetType, IndexMap<String, Asset>>,
-) -> Result<Option<Asset>, String> {
+) -> Option<Asset> {
     if index == 0 {
-        return Ok(None);
+        return None;
     }
 
-    let library = match asset_libraries.get(&asset_type) {
-        Some(lib) => lib,
-        None => return Ok(None),
-    };
+    let library = asset_libraries.get(&asset_type)?;
 
     // 1. Try V3 asset listing first
     if let Some(canonical_name) = v3_assets::get_v3_asset_name(asset_type, index) {
         let expected_id = format!("{canonical_name}_{asset_type}");
         if let Some(asset) = asset_aliases::resolve(library, &expected_id) {
-            return Ok(Some(asset.clone()));
+            return Some(asset.clone());
         }
         if let Some(asset) = library.values().find(|a| a.name == canonical_name) {
-            return Ok(Some((*asset).clone()));
+            return Some((*asset).clone());
         }
         log::warn!("V3 {asset_type} {index} is {canonical_name}, which is not in the art library");
-        return Ok(None);
+        return None;
     }
 
     // 2. Fallback: Case-insensitive sorting for out-of-range indices (e.g. modded V3 saves)
     let sorted_assets = library_in_v3_sort_order(library);
-    if index <= sorted_assets.len() {
-        Ok(Some(sorted_assets[index - 1].1.clone()))
-    } else {
-        Err(format!(
-            "Asset index {index} out of range for {asset_type:?} (max {})",
+    let Some((_, asset)) = sorted_assets.get(index - 1) else {
+        log::warn!(
+            "V3 {asset_type} {index} is out of range (max {})",
             sorted_assets.len()
-        ))
-    }
+        );
+        return None;
+    };
+    Some((*asset).clone())
 }
 
 /// The library in V3's sort order, with renamed art sorted under its old name.
@@ -92,6 +89,8 @@ fn library_in_v3_sort_order(library: &IndexMap<String, Asset>) -> Vec<(String, &
             (file_name.unwrap_or(&asset.id).to_owned(), asset)
         })
         .collect();
+    // Two old names can share one new id (V3's Eirk and EirkOld armour), so that art sorts in
+    // twice and keeps both V3 positions.
     for (old_id, new_id) in renamed {
         if !library.contains_key(*old_id)
             && let Some(asset) = library.get(*new_id)
@@ -249,7 +248,7 @@ pub fn parse_legacy_save(
 
         outlines.set_outline_colour(asset_type, &border_colour);
 
-        if let Some(asset) = get_asset_by_index(asset_type, index, asset_libraries)? {
+        if let Some(asset) = get_asset_by_index(asset_type, index, asset_libraries) {
             let position = Point::new(0.5 + (x_offset / 100.0), 0.5 + (y_offset / 100.0));
             // Normalised scale for portrait canvas (96px base)
             let scale = (scale_val / 100.0) / 96.0;
@@ -300,7 +299,7 @@ pub fn parse_legacy_save(
 
         if let Ok(token_index) = line.parse::<usize>() {
             if let Some(token_asset) =
-                get_asset_by_index(AssetType::Token, token_index, asset_libraries)?
+                get_asset_by_index(AssetType::Token, token_index, asset_libraries)
             {
                 character.token = Some(CharacterPart {
                     position: Point::new(0.5, 0.5),
@@ -428,12 +427,19 @@ mod tests {
 
         for (asset_type, names) in V3_LISTS {
             for (position, name) in names.iter().enumerate() {
-                let asset = get_asset_by_index(asset_type, position + 1, &libraries).unwrap();
+                let asset = get_asset_by_index(asset_type, position + 1, &libraries);
                 assert!(
                     asset.is_some(),
                     "V3 {asset_type} {name} is not in the art library"
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_out_of_range_index_gives_no_part() {
+        let libraries = crate::file_io::repository_art_libraries();
+
+        assert!(get_asset_by_index(AssetType::Face, 99_999, &libraries).is_none());
     }
 }

@@ -5,7 +5,7 @@ mod eframe_ui;
 
 use crate::extensions::tag_label::{TagKind, TagLabel as _};
 use fecc_core::asset::{Asset, AssetType};
-use fecc_core::asset_tags::{AssetFilter, TagChoice};
+use fecc_core::asset_tags::{AssetFilter, AvailableTags, TagChoice};
 use fecc_core::character::{Character, CharacterPart, ColourPalette, Colourable, Shade};
 use fecc_core::export::ExportSize;
 use fecc_core::file_io::{load_asset_libraries, load_colours_from_csv, load_image_bytes};
@@ -89,6 +89,8 @@ pub struct FECharacterCreator {
     search_query: String,
     asset_filter: AssetFilter,
     filters_expanded: bool,
+    #[serde(skip)]
+    available_tags: AvailableTags,
     colour_picker_open_state: HashMap<(Colourable, Shade), bool>,
     outline_picker_open_state: HashMap<AssetType, bool>,
     portrait_rect: Rect,
@@ -190,6 +192,7 @@ impl Default for FECharacterCreator {
             search_query: String::new(),
             asset_filter: Default::default(),
             filters_expanded: true,
+            available_tags: Default::default(),
             colour_picker_open_state: iproduct!(Colourable::iter(), Shade::iter())
                 .map(|combo| (combo, false))
                 .collect(),
@@ -432,7 +435,7 @@ impl FECharacterCreator {
         ctx: &Context,
         ui: &mut Ui,
         library: &IndexMap<String, Asset>,
-        search_query: &str,
+        shown_assets: &[&Asset],
     ) -> Option<Asset> {
         let mut clicked_asset = None;
 
@@ -456,23 +459,20 @@ impl FECharacterCreator {
 
         let asset_filter = self.asset_filter.clone();
         let mut tag_clicks = Vec::new();
-        for asset in library
-            .iter()
-            .filter(|(_, asset)| asset_matches(&asset_filter, search_query, asset))
-        {
+        for &asset in shown_assets {
             let (rect, response) = ui.allocate_at_least(total_item_size, egui::Sense::click());
 
             if ui.is_rect_visible(rect) {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                     ui.vertical(|ui| {
                         let mut selected = false;
-                        if let Some(part) = self.character.get_character_part(&asset.1.asset_type)
-                            && part.asset == *asset.1
+                        if let Some(part) = self.character.get_character_part(&asset.asset_type)
+                            && part.asset == *asset
                         {
                             selected = true;
                         }
 
-                        let main_texture_opt = self.get_or_load_texture(ctx, asset.1);
+                        let main_texture_opt = self.get_or_load_texture(ctx, asset);
 
                         let button_response = ui.add(
                             egui::Button::new("")
@@ -484,8 +484,8 @@ impl FECharacterCreator {
                             let rect = button_response.rect;
                             let painter = ui.painter_at(rect);
 
-                            if asset.1.asset_type == AssetType::Hair
-                                && let Some(back_part_id) = &asset.1.back_part
+                            if asset.asset_type == AssetType::Hair
+                                && let Some(back_part_id) = &asset.back_part
                                 && let Some(back_asset) = self
                                     .asset_libraries
                                     .get(&AssetType::HairBack)
@@ -522,23 +522,23 @@ impl FECharacterCreator {
                             button_response.scroll_to_me(Some(Align::TOP));
                         }
                         if button_response.clicked() {
-                            clicked_asset = Some(asset.1.clone());
+                            clicked_asset = Some(asset.clone());
                         }
                         if show_tags {
                             ui.set_clip_rect(rect.intersect(ui.clip_rect()));
                             ui.horizontal_wrapped(|ui| {
-                                ui.label(&asset.1.name);
-                                tag_clicks.extend(asset_tablets(ui, asset.1, &asset_filter));
+                                ui.label(&asset.name);
+                                tag_clicks.extend(asset_tablets(ui, asset, &asset_filter));
                             });
                         } else {
-                            ui.label(&asset.1.name);
+                            ui.label(&asset.name);
                         }
                     });
                 });
             } else {
                 let mut selected = false;
-                if let Some(part) = self.character.get_character_part(&asset.1.asset_type)
-                    && part.asset == *asset.1
+                if let Some(part) = self.character.get_character_part(&asset.asset_type)
+                    && part.asset == *asset
                 {
                     selected = true;
                 }
@@ -677,6 +677,19 @@ impl FECharacterCreator {
         }
     }
 
+    /// The canvas size on screen, or the export size before the canvas is first laid out.
+    fn canvas_size(&self, canvas_type: CanvasType) -> Point {
+        let (rect, (width, height)) = match canvas_type {
+            CanvasType::Portrait => (self.portrait_rect, self.export_size_selection.portrait()),
+            CanvasType::Token => (self.token_rect, self.export_size_selection.token()),
+        };
+        if rect.width() > 0.0 {
+            Point::new(rect.width(), rect.height())
+        } else {
+            Point::new(width as f32, height as f32)
+        }
+    }
+
     fn get_normalised_character(&self) -> Character {
         let mut normalised_character = self.character.clone();
 
@@ -787,51 +800,24 @@ impl FECharacterCreator {
             old_token_rect = self.token_rect;
         }
 
-        if old_portrait_rect.width() > 0.0
-            && ((old_portrait_rect.width() - self.portrait_rect.width()).abs() > 1.0
-                || (old_portrait_rect.height() - self.portrait_rect.height()).abs() > 1.0)
-        {
-            let scale_factor =
-                if (old_portrait_rect.width() - self.portrait_rect.width()).abs() > 1.0 {
-                    self.portrait_rect.width() / old_portrait_rect.width()
-                } else if old_portrait_rect.height() > 0.0
-                    && (old_portrait_rect.height() - self.portrait_rect.height()).abs() > 1.0
-                {
-                    self.portrait_rect.height() / old_portrait_rect.height()
-                } else {
-                    1.0
-                };
-            let old_center = Point::new(
-                old_portrait_rect.width() / 2.0,
-                old_portrait_rect.height() / 2.0,
-            );
-            let new_center = Point::new(
-                self.portrait_rect.width() / 2.0,
-                self.portrait_rect.height() / 2.0,
-            );
-            self.scale_character_parts(old_center, new_center, scale_factor, false);
+        self.rescale_for_canvas(old_portrait_rect, self.portrait_rect, false);
+        self.rescale_for_canvas(old_token_rect, self.token_rect, true);
+    }
+
+    /// Carries the parts over to a canvas that has changed size.
+    fn rescale_for_canvas(&mut self, old_rect: Rect, new_rect: Rect, is_token: bool) {
+        let resized = (old_rect.width() - new_rect.width()).abs() > 1.0
+            || (old_rect.height() - new_rect.height()).abs() > 1.0;
+        if old_rect.width() <= 0.0 || !resized {
+            return;
         }
-        if old_token_rect.width() > 0.0
-            && ((old_token_rect.width() - self.token_rect.width()).abs() > 1.0
-                || (old_token_rect.height() - self.token_rect.height()).abs() > 1.0)
-        {
-            let scale_factor = if (old_token_rect.width() - self.token_rect.width()).abs() > 1.0 {
-                self.token_rect.width() / old_token_rect.width()
-            } else if old_token_rect.height() > 0.0
-                && (old_token_rect.height() - self.token_rect.height()).abs() > 1.0
-            {
-                self.token_rect.height() / old_token_rect.height()
-            } else {
-                1.0
-            };
-            let old_center =
-                Point::new(old_token_rect.width() / 2.0, old_token_rect.height() / 2.0);
-            let new_center = Point::new(
-                self.token_rect.width() / 2.0,
-                self.token_rect.height() / 2.0,
-            );
-            self.scale_character_parts(old_center, new_center, scale_factor, true);
-        }
+        let centre = |rect: Rect| Point::new(rect.width() / 2.0, rect.height() / 2.0);
+        self.scale_character_parts(
+            centre(old_rect),
+            centre(new_rect),
+            canvas_scale_factor(old_rect.size(), new_rect.size()),
+            is_token,
+        );
     }
 
     fn paint_canvas(
@@ -1172,6 +1158,14 @@ fn asset_tablets(ui: &mut Ui, asset: &Asset, filter: &AssetFilter) -> Vec<(TagKi
 }
 
 /// Checks whether an asset matches the filter and the search query.
+/// The factor that carries parts from one canvas size to another.
+///
+/// Follows the width alone, so the parts stay lined up and a change in the canvas's shape crops or
+/// extends it the same way whichever way the window constrains it.
+fn canvas_scale_factor(old_size: Vec2, new_size: Vec2) -> f32 {
+    new_size.x / old_size.x
+}
+
 pub(crate) fn asset_matches(filter: &AssetFilter, search_query: &str, asset: &Asset) -> bool {
     filter.matches(asset)
         && (search_query.is_empty() || asset.name.to_lowercase().contains(search_query))
@@ -1205,6 +1199,17 @@ mod tests {
         assert!((res.portrait_size.y - 300.0).abs() < 1e-4);
         assert!((res.token_size.x - 300.0).abs() < 1e-4);
         assert!((res.token_size.y - 300.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_canvas_scale_factor_ignores_window_shape() {
+        // Original (96x96) to ROMHack (96x80) keeps the art's export size, in a window that
+        // constrains the canvas by width and in one that constrains it by height.
+        let by_width = canvas_scale_factor(vec2(300.0, 300.0), vec2(300.0, 250.0));
+        let by_height = canvas_scale_factor(vec2(300.0, 300.0), vec2(360.0, 300.0));
+
+        assert!((by_width - 300.0 / 300.0).abs() < 1e-4);
+        assert!((by_height - 360.0 / 300.0).abs() < 1e-4);
     }
 
     #[test]

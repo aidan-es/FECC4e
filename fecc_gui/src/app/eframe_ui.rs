@@ -1,5 +1,5 @@
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
-use super::asset_matches;
+use super::{CanvasType, asset_matches};
 use crate::FECharacterCreator;
 use crate::extensions::color32::Contrast as _;
 use crate::extensions::tag_label::{TagKind, TagLabel as _};
@@ -10,7 +10,7 @@ use eframe::epaint::{Color32, Stroke};
 use egui::{Button, Context, Image, RichText, Ui};
 use egui_commonmark::CommonMarkViewer;
 use egui_extras::{Column, TableBuilder};
-use fecc_core::asset::AssetType;
+use fecc_core::asset::{Asset, AssetType};
 use fecc_core::asset_tags::{AvailableTags, TagChoice, category_title};
 use fecc_core::character::Colourable::Skin;
 use fecc_core::character::{CharacterPartColours, Colourable, Shade};
@@ -73,6 +73,7 @@ impl eframe::App for FECharacterCreator {
                             .entry(asset.asset_type)
                             .or_default()
                             .insert(asset.id.clone(), asset);
+                        self.refresh_available_tags();
                         self.add_art_error = None;
                         self.toasts.success("Successfully added art.");
                     }
@@ -206,15 +207,7 @@ impl eframe::App for FECharacterCreator {
                             })
                             .collect();
 
-                        let portrait_canvas_size = if self.portrait_rect.width() > 0.0 {
-                            fecc_core::types::Point::new(
-                                self.portrait_rect.width(),
-                                self.portrait_rect.height(),
-                            )
-                        } else {
-                            let (pw, ph) = self.export_size_selection.portrait();
-                            fecc_core::types::Point::new(pw as f32, ph as f32)
-                        };
+                        let portrait_canvas_size = self.canvas_size(CanvasType::Portrait);
 
                         randomize_assets(
                             &mut self.character,
@@ -224,15 +217,7 @@ impl eframe::App for FECharacterCreator {
                             &self.asset_filter,
                         );
 
-                        let token_canvas_size = if self.token_rect.width() > 0.0 {
-                            fecc_core::types::Point::new(
-                                self.token_rect.width(),
-                                self.token_rect.height(),
-                            )
-                        } else {
-                            let (tw, th) = self.export_size_selection.token();
-                            fecc_core::types::Point::new(tw as f32, th as f32)
-                        };
+                        let token_canvas_size = self.canvas_size(CanvasType::Token);
 
                         randomize_assets(
                             &mut self.character,
@@ -267,8 +252,23 @@ impl eframe::App for FECharacterCreator {
                     ui.text_edit_singleline(&mut self.search_query);
                 });
                 let search_query_cleaned = self.search_query.to_lowercase();
-                let (shown, total) = self.count_shown_assets();
-                ui.label(RichText::new(format!("Showing {shown} of {total}")).weak());
+                let library = self
+                    .asset_libraries
+                    .get(&self.active_tab)
+                    .cloned()
+                    .unwrap_or_default();
+                let shown_assets: Vec<&Asset> = library
+                    .values()
+                    .filter(|asset| asset_matches(&self.asset_filter, &search_query_cleaned, asset))
+                    .collect();
+                ui.label(
+                    RichText::new(format!(
+                        "Showing {} of {}",
+                        shown_assets.len(),
+                        library.len()
+                    ))
+                    .weak(),
+                );
                 ui.separator();
 
                 if ui
@@ -279,25 +279,11 @@ impl eframe::App for FECharacterCreator {
                 {
                     self.randomise_used = true;
                     let asset_type = self.active_tab;
-                    let canvas_size = if asset_type == AssetType::Token {
-                        if self.token_rect.width() > 0.0 {
-                            fecc_core::types::Point::new(
-                                self.token_rect.width(),
-                                self.token_rect.height(),
-                            )
-                        } else {
-                            let (tw, th) = self.export_size_selection.token();
-                            fecc_core::types::Point::new(tw as f32, th as f32)
-                        }
-                    } else if self.portrait_rect.width() > 0.0 {
-                        fecc_core::types::Point::new(
-                            self.portrait_rect.width(),
-                            self.portrait_rect.height(),
-                        )
+                    let canvas_size = self.canvas_size(if asset_type == AssetType::Token {
+                        CanvasType::Token
                     } else {
-                        let (pw, ph) = self.export_size_selection.portrait();
-                        fecc_core::types::Point::new(pw as f32, ph as f32)
-                    };
+                        CanvasType::Portrait
+                    });
 
                     randomize_assets(
                         &mut self.character,
@@ -314,14 +300,11 @@ impl eframe::App for FECharacterCreator {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let asset_type = self.active_tab;
 
-                    if let Some(library) = self.asset_libraries.get(&asset_type)
-                        && let Some(asset) =
-                            self.display_assets(&ctx, ui, &library.clone(), &search_query_cleaned)
-                    {
-                        self.select_asset(&asset.clone(), asset_type);
+                    if let Some(asset) = self.display_assets(&ctx, ui, &library, &shown_assets) {
+                        self.select_asset(&asset, asset_type);
                     }
 
-                    if shown == 0 && total > 0 {
+                    if shown_assets.is_empty() && !library.is_empty() {
                         ui.label("Nothing matches the filter and search.");
                         if ui.button("Show everything").clicked() {
                             self.asset_filter = Default::default();
@@ -677,10 +660,6 @@ impl eframe::App for FECharacterCreator {
                             .changed();
                     });
                     if changed {
-                        self.custom_portrait_width = self.custom_portrait_width.clamp(1, 4096);
-                        self.custom_portrait_height = self.custom_portrait_height.clamp(1, 4096);
-                        self.custom_token_width = self.custom_token_width.clamp(1, 4096);
-                        self.custom_token_height = self.custom_token_height.clamp(1, 4096);
                         self.export_size_selection = ExportSize::Custom {
                             portrait: (self.custom_portrait_width, self.custom_portrait_height),
                             token: (self.custom_token_width, self.custom_token_height),
@@ -889,6 +868,7 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
             match rx.try_recv() {
                 Ok(Some(libs)) => {
                     self.asset_libraries = libs;
+                    self.refresh_available_tags();
 
                     if self.character_needs_asset_refresh {
                         self.character.relink_assets(&self.asset_libraries);
@@ -1082,29 +1062,22 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
 }
 
 impl FECharacterCreator {
-    /// Returns the number of assets shown on the active tab and the total number.
-    fn count_shown_assets(&self) -> (usize, usize) {
-        let search_query = self.search_query.to_lowercase();
-        self.asset_libraries
-            .get(&self.active_tab)
-            .map_or((0, 0), |library| {
-                let shown = library
-                    .values()
-                    .filter(|asset| asset_matches(&self.asset_filter, &search_query, asset))
-                    .count();
-                (shown, library.len())
-            })
+    /// Collects the tags used by the selectable assets, for the filter rows.
+    ///
+    /// Call this whenever the asset libraries change.
+    fn refresh_available_tags(&mut self) {
+        self.available_tags = AvailableTags::from_assets(
+            AssetType::get_selectable_part_types()
+                .filter_map(|asset_type| self.asset_libraries.get(&asset_type))
+                .flat_map(|library| library.values()),
+        );
     }
 
     /// Shows the collapsible game and artist filters.
     ///
     /// Each row is only shown if some art has that kind of tag.
     fn asset_filter_ui(&mut self, ui: &mut Ui) {
-        let available = AvailableTags::from_assets(
-            AssetType::get_selectable_part_types()
-                .filter_map(|asset_type| self.asset_libraries.get(&asset_type))
-                .flat_map(|library| library.values()),
-        );
+        let available = &self.available_tags;
         if available.categories.is_empty() && available.contributors.is_empty() {
             return;
         }

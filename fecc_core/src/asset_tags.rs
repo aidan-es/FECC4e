@@ -101,7 +101,7 @@ fn game_number(category: &str) -> Option<usize> {
     (1..=GAMES.len()).contains(&number).then_some(number)
 }
 
-/// Returns the full title for a game category, e.g. `FE7: The Blazing Blade`.
+/// Returns the full title for a game category, e.g. `Fire Emblem: The Blazing Blade`.
 pub fn category_title(category: &str) -> Option<String> {
     game_number(category).map(|number| format!("Fire Emblem: {}", GAMES[number - 1]))
 }
@@ -280,7 +280,7 @@ mod tests {
     fn test_category_title_and_order() {
         assert_eq!(
             category_title("fe7").as_deref(),
-            Some("FE7: The Blazing Blade")
+            Some("Fire Emblem: The Blazing Blade")
         );
         assert_eq!(category_title("FE0"), None);
         assert_eq!(category_title("MyHack"), None);
