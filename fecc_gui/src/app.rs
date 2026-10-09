@@ -692,36 +692,7 @@ impl FECharacterCreator {
 
     fn get_normalised_character(&self) -> Character {
         let mut normalised_character = self.character.clone();
-
-        let portrait_size = self.portrait_rect.size();
-        if portrait_size.x > 0.0 && portrait_size.y > 0.0 {
-            for asset_type in [
-                AssetType::Armour,
-                AssetType::Face,
-                AssetType::Hair,
-                AssetType::HairBack,
-                AssetType::Accessory,
-            ] {
-                if let Some(mut part) = normalised_character.get_character_part(&asset_type) {
-                    part.position.x /= portrait_size.x;
-                    part.position.y /= portrait_size.y;
-                    part.scale /= portrait_size.y;
-                    normalised_character.set_character_part(&asset_type, part);
-                }
-            }
-        }
-
-        let token_size = self.token_rect.size();
-        if token_size.x > 0.0
-            && token_size.y > 0.0
-            && let Some(mut part) = normalised_character.get_character_part(&AssetType::Token)
-        {
-            part.position.x /= token_size.x;
-            part.position.y /= token_size.y;
-            part.scale /= token_size.y;
-            normalised_character.set_character_part(&AssetType::Token, part);
-        }
-
+        normalised_character.normalise(point_size(self.portrait_rect), point_size(self.token_rect));
         normalised_character
     }
 
@@ -766,35 +737,8 @@ impl FECharacterCreator {
         });
 
         if self.is_character_normalised && self.portrait_rect.width() > 0.0 {
-            let portrait_size = self.portrait_rect.size();
-            if portrait_size.x > 0.0 && portrait_size.y > 0.0 {
-                let portrait_parts = [
-                    AssetType::Armour,
-                    AssetType::Face,
-                    AssetType::Hair,
-                    AssetType::HairBack,
-                    AssetType::Accessory,
-                ];
-                for asset_type in portrait_parts {
-                    if let Some(mut part) = self.character.get_character_part(&asset_type) {
-                        part.position.x *= portrait_size.x;
-                        part.position.y *= portrait_size.y;
-                        part.scale *= portrait_size.y;
-                        self.character.set_character_part(&asset_type, part);
-                    }
-                }
-            }
-
-            let token_size = self.token_rect.size();
-            if token_size.x > 0.0
-                && token_size.y > 0.0
-                && let Some(mut part) = self.character.get_character_part(&AssetType::Token)
-            {
-                part.position.x *= token_size.x;
-                part.position.y *= token_size.y;
-                part.scale *= token_size.y;
-                self.character.set_character_part(&AssetType::Token, part);
-            }
+            self.character
+                .denormalise(point_size(self.portrait_rect), point_size(self.token_rect));
             self.is_character_normalised = false;
             old_portrait_rect = self.portrait_rect;
             old_token_rect = self.token_rect;
@@ -1157,7 +1101,11 @@ fn asset_tablets(ui: &mut Ui, asset: &Asset, filter: &AssetFilter) -> Vec<(TagKi
     clicked
 }
 
-/// Checks whether an asset matches the filter and the search query.
+/// The size of a canvas rect as a `Point`.
+fn point_size(rect: Rect) -> Point {
+    Point::new(rect.width(), rect.height())
+}
+
 /// The factor that carries parts from one canvas size to another.
 ///
 /// Follows the width alone, so the parts stay lined up and a change in the canvas's shape crops or
@@ -1166,6 +1114,7 @@ fn canvas_scale_factor(old_size: Vec2, new_size: Vec2) -> f32 {
     new_size.x / old_size.x
 }
 
+/// Checks whether an asset matches the filter and the search query.
 pub(crate) fn asset_matches(filter: &AssetFilter, search_query: &str, asset: &Asset) -> bool {
     filter.matches(asset)
         && (search_query.is_empty() || asset.name.to_lowercase().contains(search_query))
