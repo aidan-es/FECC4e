@@ -444,7 +444,13 @@ impl eframe::App for FECharacterCreator {
                                         });
                                     }
 
-                                    if self.colour_picker_open_state[&(colourable, shade)] {
+                                    // A session saved before a colourable or shade existed lacks its entry.
+                                    if self
+                                        .colour_picker_open_state
+                                        .get(&(colourable, shade))
+                                        .copied()
+                                        .unwrap_or(false)
+                                    {
                                         self.present_colour_picker(ui.ctx(), colourable, shade);
                                     }
                                 }
