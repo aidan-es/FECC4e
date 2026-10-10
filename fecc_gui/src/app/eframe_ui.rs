@@ -797,8 +797,7 @@ impl FECharacterCreator {
                         if let Some(file) = rfd::AsyncFileDialog::new().pick_file().await {
                             let file_name = file.file_name();
                             let bytes = file.read().await;
-                            let result =
-                                Asset::try_from_bytes(&file_name, &bytes);
+                            let result = Asset::try_from_bytes(&file_name, &bytes);
                             if sender.unbounded_send(result).is_err() {
                                 log::warn!("Asset receiver dropped before the new art was sent");
                             }
@@ -846,9 +845,11 @@ Many original token art assets are by [Iscaneus](https://www.deviantart.com/isca
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                CommonMarkViewer::new()
-                    .max_image_width(Some(512))
-                    .show(ui, &mut self.markdown_cache, &markdown_content);
+                CommonMarkViewer::new().max_image_width(Some(512)).show(
+                    ui,
+                    &mut self.markdown_cache,
+                    &markdown_content,
+                );
             });
     }
 

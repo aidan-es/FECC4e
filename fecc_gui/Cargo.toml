@@ -18,7 +18,6 @@ targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 [dependencies]
 egui = { workspace = true }
 fecc_core = { workspace = true }
-eframe = { workspace = true, features = ["persistence"] }
 log = { workspace = true }
 egui_extras = { workspace = true, features = ["svg"] }
 image = { workspace = true, features = ["png"] }
@@ -39,6 +38,7 @@ ahash = { workspace = true }
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+eframe = { workspace = true, features = ["default", "persistence"] }
 chrono = { workspace = true }
 fern = { workspace = true }
 dirs-next = { workspace = true }
@@ -47,6 +47,8 @@ tokio = { workspace = true, features = ["fs", "macros", "rt-multi-thread"] }
 
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# glow (WebGL2) rather than the (new) default wgpu, which is ~1.75 MB larger for no real benefit
+eframe = { workspace = true, features = ["default_fonts", "glow", "persistence", "web_screen_reader"] }
 wasm-bindgen = { workspace = true }
 web-sys = { workspace = true }
 js-sys = { workspace = true }

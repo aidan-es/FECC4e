@@ -17,7 +17,7 @@ opt-level = 2
 
 [workspace.dependencies]
 csv = "1.4.0"
-eframe = "0.36.2"
+eframe = { version = "0.36.2", default-features = false } # Features chosen per platform in fecc_gui
 egui = "0.36.2"
 egui-notify = "0.23.0"
 egui_commonmark = "0.25.0"
