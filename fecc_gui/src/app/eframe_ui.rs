@@ -1,11 +1,11 @@
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
-use super::{CanvasType, asset_matches};
+use super::{CanvasType, ICON_TEXTURE_OPTIONS, asset_matches};
 use crate::FECharacterCreator;
 use crate::extensions::color32::Contrast as _;
 use crate::extensions::tag_label::{TagKind, TagLabel as _};
 use crate::extensions::toggle_switch::toggle;
 use ahash::HashSet;
-use eframe::emath::vec2;
+use eframe::emath::{Vec2, vec2};
 use eframe::epaint::{Color32, Stroke};
 use egui::{Button, Context, Image, RichText, Ui};
 use egui_commonmark::CommonMarkViewer;
@@ -377,8 +377,10 @@ impl eframe::App for FECharacterCreator {
 
                                 if self.colour_palettes.contains_key(&colourable) {
                                     let cycle_colours_symbol = Image::new(egui::include_image!(
-                                        "../../../assets/coins-swap.svg"
-                                    ));
+                                        "../../../assets/coins-swap.png"
+                                    ))
+                                    .texture_options(ICON_TEXTURE_OPTIONS)
+                                    .fit_to_exact_size(Vec2::splat(16.0));
                                     let peek_colour = *self.colour_palettes[&colourable].peek();
                                     let cycle_colours = Button::image(cycle_colours_symbol)
                                         .fill(to_c32(peek_colour));

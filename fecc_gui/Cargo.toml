@@ -19,7 +19,7 @@ targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 egui = { workspace = true }
 fecc_core = { workspace = true }
 log = { workspace = true }
-egui_extras = { workspace = true, features = ["svg"] }
+egui_extras = { workspace = true, features = ["image"] }
 image = { workspace = true, features = ["png"] }
 strum_macros = { workspace = true }
 rfd = { workspace = true }

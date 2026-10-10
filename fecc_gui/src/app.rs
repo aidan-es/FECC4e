@@ -34,6 +34,13 @@ use tokio::runtime::Runtime;
 /// How many images the background preload fetches at once.
 const PRELOAD_BATCH_SIZE: usize = 16;
 
+/// Texture options for the PNG icons, which are drawn smaller than their source images.
+///
+/// The icons are rendered from the SVGs in `assets` at 4× the size they're drawn at. With
+/// mipmaps, that keeps them sharp at 1× and 2× display scales, and smooth in between.
+pub(crate) const ICON_TEXTURE_OPTIONS: egui::TextureOptions =
+    egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
+
 type ImageReceiver = Option<mpsc::UnboundedReceiver<(String, Result<Arc<RgbaImage>, String>)>>;
 pub(crate) type ImageSender = mpsc::UnboundedSender<(String, Result<Arc<RgbaImage>, String>)>;
 
@@ -272,7 +279,7 @@ impl Default for FECharacterCreator {
 
 impl FECharacterCreator {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // Needed for the SVG icons on the canvas and in the colour panel
+        // Needed for the PNG icons on the canvas and in the colour panel
         egui_extras::install_image_loaders(&cc.egui_ctx);
 
         // Use smaller subsets of egui's default fonts

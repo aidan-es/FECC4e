@@ -1,6 +1,6 @@
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
 use crate::FECharacterCreator;
-use crate::app::{Corner, Interaction};
+use crate::app::{Corner, ICON_TEXTURE_OPTIONS, Interaction};
 use crate::extensions::color32::Contrast as _;
 use ahash::HashMap;
 use eframe::emath::{Pos2, Rect, Rot2, Vec2, pos2, vec2};
@@ -120,7 +120,8 @@ impl FECharacterCreator {
             Rect::from_center_size(flip_handle_pos, vec2(1.0, 1.0) * FLIP_HANDLE_RADIUS * 2.0);
         let flip_response = ui.interact(flip_rect, ui.id().with("flip"), egui::Sense::click());
 
-        let source = egui::Image::new(egui::include_image!("../../../assets/flip.svg"));
+        let source = egui::Image::new(egui::include_image!("../../../assets/flip.png"))
+            .texture_options(ICON_TEXTURE_OPTIONS);
         let texture_id = source
             .load_for_size(ui.ctx(), Vec2::splat(24.0))
             .expect("Failed to load flip icon")
@@ -222,7 +223,8 @@ impl FECharacterCreator {
 
             let rotation_angle = rotated_diag.rot90().angle();
 
-            let source = egui::Image::new(egui::include_image!("../../../assets/rotate.svg"));
+            let source = egui::Image::new(egui::include_image!("../../../assets/rotate.png"))
+                .texture_options(ICON_TEXTURE_OPTIONS);
             let rotate_texture_id = source
                 .load_for_size(ui.ctx(), Vec2::splat(20.0))
                 .expect("Failed to load rotate icon")
