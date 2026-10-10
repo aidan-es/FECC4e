@@ -798,7 +798,7 @@ impl FECharacterCreator {
                             let file_name = file.file_name();
                             let bytes = file.read().await;
                             let result =
-                                fecc_core::asset::Asset::try_from_bytes(&file_name, &bytes);
+                                Asset::try_from_bytes(&file_name, &bytes);
                             if sender.unbounded_send(result).is_err() {
                                 log::warn!("Asset receiver dropped before the new art was sent");
                             }
@@ -816,37 +816,38 @@ impl FECharacterCreator {
     fn show_about_window(&mut self, ctx: &Context) {
         let version = env!("CARGO_PKG_VERSION");
 
-        // Define your content as a standard Markdown string
         let markdown_content = format!(
             r#"
 # FE Character Creator, 4th Edition
 **Version {version}**
 
 This software comes with **ABSOLUTELY NO WARRANTY**.
-Licensed under the [GNU AGPLv3](https://www.gnu.org/licenses/agpl-3.0.html) - excluding art assets.
+Licensed under [GNU AGPLv3](https://www.gnu.org/licenses/agpl-3.0.html) - excluding art assets.
 
-[Source Code](https://github.com/aidan-es/FECC4e)
+[Source Code on Github](https://github.com/aidan-es/FECC4e)
+
+You can download native (e.g desktop) versions of the app [here](https://github.com/aidan-es/FECC4e/releases).
 
 ---
 
 ### Credits
 Built with [Rust](https://www.rust-lang.org/) and [egui](https://github.com/emilk/egui).
 
-This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by [TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scala by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc).
+FECC4e was written by myself, Aidan. It is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by [TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scala with further updates by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc).
 
-Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
+Art assets are principally of the Game Boy Advance era Fire Emblem games developed by [Intelligent Systems](https://en.wikipedia.org/wiki/Intelligent_Systems), namely Fire Emblem: The Binding Blade, Fire Emblem: The Blazing Blade and Fire Emblem: The Sacred Stones; known as FE6, FE7 and FE8 respectively and originally released in Japan between 2002 and 2004.
+Many original token art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
 "#
         );
 
         egui::Window::new("About")
             .open(&mut self.about_window_open)
             .collapsible(false)
-            .resizable(false) // CommonMarkViewer handles resizing, but fixed is fine too
+            .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                // Render the Markdown
                 CommonMarkViewer::new()
-                    .max_image_width(Some(512)) // Optional: limit image width if you add logos
+                    .max_image_width(Some(512))
                     .show(ui, &mut self.markdown_cache, &markdown_content);
             });
     }
