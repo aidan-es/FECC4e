@@ -40,26 +40,6 @@ export async function fetch_image_bytes(url, priority) {
 }
 
 /**
- * Fetches the list of asset files from a manifest.
- * @param {string} url - The URL of the asset manifest JSON file.
- * @returns {Promise<string[]|null>} A promise that resolves with an array of file paths, or null if an error occurs.
- */
-export async function fetch_asset_list(url) {
-    try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            console.error(`HTTP error! status: ${response.status} for ${url}`);
-            return null;
-        }
-        const data = await response.json();
-        return data.files;
-    } catch (e) {
-        console.error(`Failed to fetch asset list at ${url}:`, e);
-        return null;
-    }
-}
-
-/**
  * Triggers a browser download for a file.
  * @param {Uint8Array} bytes - The file content as bytes.
  * @param {string} filename - The desired name for the downloaded file.

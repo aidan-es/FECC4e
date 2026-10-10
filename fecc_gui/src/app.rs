@@ -9,7 +9,7 @@ use fecc_core::asset_tags::{AssetFilter, AvailableTags, TagChoice};
 use fecc_core::character::{Character, CharacterPart, ColourPalette, Colourable, Shade};
 use fecc_core::export::ExportSize;
 use fecc_core::file_io::{
-    load_asset_libraries, load_colours_from_csv, load_image_bytes, preload_image_bytes,
+    load_colours_from_csv, load_image_bytes, preload_image_bytes,
 };
 use fecc_core::types::Point;
 
@@ -40,6 +40,11 @@ const PRELOAD_BATCH_SIZE: usize = 16;
 /// mipmaps, that keeps them sharp at 1× and 2× display scales, and smooth in between.
 pub(crate) const ICON_TEXTURE_OPTIONS: egui::TextureOptions =
     egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
+/// The `art` file names, listed by build.rs.
+#[cfg(target_arch = "wasm32")]
+mod art_files {
+    include!(concat!(env!("OUT_DIR"), "/art_files.rs"));
+}
 
 type ImageReceiver = Option<mpsc::UnboundedReceiver<(String, Result<Arc<RgbaImage>, String>)>>;
 pub(crate) type ImageSender = mpsc::UnboundedSender<(String, Result<Arc<RgbaImage>, String>)>;
@@ -321,6 +326,7 @@ impl FECharacterCreator {
 
         // Repaint once each load finish so the results show without waiting for input
         let palettes_ctx = cc.egui_ctx.clone();
+        #[cfg(not(target_arch = "wasm32"))]
         let assets_ctx = cc.egui_ctx.clone();
 
         let (palettes_tx, palettes_rx) = futures_channel::oneshot::channel();
@@ -359,8 +365,21 @@ impl FECharacterCreator {
         };
 
         let (assets_tx, assets_rx) = futures_channel::oneshot::channel();
+
+        // The web build has its art list baked in, so its libraries need no fetch
+        #[cfg(target_arch = "wasm32")]
+        if assets_tx
+            .send(fecc_core::file_io::asset_libraries_from_files(
+                art_files::ART_FILES,
+            ))
+            .is_err()
+        {
+            log::warn!("Assets receiver dropped before libraries were sent");
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         let assets_task = async move {
-            match load_asset_libraries().await {
+            match fecc_core::file_io::load_asset_libraries().await {
                 Ok(libs) => {
                     if assets_tx.send(libs).is_err() {
                         log::warn!("Assets receiver dropped before libraries were sent");
@@ -374,10 +393,7 @@ impl FECharacterCreator {
         };
 
         #[cfg(target_arch = "wasm32")]
-        {
             wasm_bindgen_futures::spawn_local(palettes_task);
-            wasm_bindgen_futures::spawn_local(assets_task);
-        }
 
         #[cfg(not(target_arch = "wasm32"))]
         {

@@ -25,5 +25,4 @@ tokio = { workspace = true, features = ["fs", "macros", "rt-multi-thread"] }
 wasm-bindgen = { workspace = true }
 web-sys = { workspace = true }
 js-sys = { workspace = true }
-serde-wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }

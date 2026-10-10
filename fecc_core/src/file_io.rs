@@ -7,32 +7,18 @@ use crate::types::Rgba;
 use indexmap::IndexMap;
 #[cfg(target_arch = "wasm32")]
 use js_sys;
-#[cfg(target_arch = "wasm32")]
-use serde_wasm_bindgen;
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-/// Asynchronously loads all character assets from the `art` directory into libraries. (Be it local or remote)
+/// Asynchronously loads all character assets from the local `art` directory into libraries.
 ///
-/// Handles asset loading for both native and WebAssembly (WASM) builds.
-/// For native builds, it scans the `art` directory directly. For WASM, it fetches a
-/// manifest file and then loads the assets listed within it.
+/// The web build has no directory to scan, so it uses [`asset_libraries_from_files`] instead.
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn load_asset_libraries()
 -> Result<HashMap<AssetType, IndexMap<String, Asset>>, Box<dyn Error + Send + Sync>> {
-    let mut asset_libraries: HashMap<AssetType, IndexMap<String, Asset>> = [
-        (AssetType::Armour, IndexMap::new()),
-        (AssetType::Face, IndexMap::new()),
-        (AssetType::Hair, IndexMap::new()),
-        (AssetType::HairBack, IndexMap::new()),
-        (AssetType::Accessory, IndexMap::new()),
-        (AssetType::Token, IndexMap::new()),
-    ]
-    .into_iter()
-    .collect();
+    let mut asset_libraries = empty_asset_libraries();
 
-    #[cfg(not(target_arch = "wasm32"))]
-    {
         let path_pattern = "art/*.png";
         for path in glob::glob(path_pattern)
             .expect("Failed to read glob pattern")
@@ -40,24 +26,31 @@ pub async fn load_asset_libraries()
         {
             add_asset_to_library(&mut asset_libraries, &path);
         }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        let asset_list_val = wasm::fetch_asset_list("assets/asset_manifest.json")
-            .await
-            .map_err(|e| e.as_string().unwrap_or_else(|| "JS error".to_string()))?;
-
-        let files: Vec<String> =
-            serde_wasm_bindgen::from_value(asset_list_val).map_err(|e| e.to_string())?;
-
-        for filename in files {
-            let path = PathBuf::from(format!("art/{}", filename));
-            add_asset_to_library(&mut asset_libraries, &path);
-        }
-    }
 
     Ok(asset_libraries)
+}
+
+/// Builds the libraries from a list of `art` file names.
+///
+/// The web build uses the list its build script bakes in, so it needs no fetch.
+pub fn asset_libraries_from_files(files: &[&str]) -> HashMap<AssetType, IndexMap<String, Asset>> {
+    let mut asset_libraries = empty_asset_libraries();
+
+    for file_name in files {
+        let path = PathBuf::from(format!("art/{file_name}"));
+        add_asset_to_library(&mut asset_libraries, &path);
+    }
+
+    asset_libraries
+}
+
+/// An empty library for each asset type.
+fn empty_asset_libraries() -> HashMap<AssetType, IndexMap<String, Asset>> {
+    use strum::IntoEnumIterator as _;
+
+    AssetType::iter()
+        .map(|asset_type| (asset_type, IndexMap::new()))
+        .collect()
 }
 
 /// Parses an asset from a path and adds it to the appropriate library.
@@ -86,8 +79,6 @@ fn add_asset_to_library(
 /// The libraries the native app loads from the `art` directory.
 #[cfg(test)]
 pub(crate) fn repository_art_libraries() -> HashMap<AssetType, IndexMap<String, Asset>> {
-    use strum::IntoEnumIterator as _;
-
     let art_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../art");
     let mut paths: Vec<PathBuf> = std::fs::read_dir(&art_dir)
         .expect("Failed to read the art directory")
@@ -96,9 +87,7 @@ pub(crate) fn repository_art_libraries() -> HashMap<AssetType, IndexMap<String, 
         .collect();
     paths.sort();
 
-    let mut asset_libraries = AssetType::iter()
-        .map(|asset_type| (asset_type, IndexMap::new()))
-        .collect();
+    let mut asset_libraries = empty_asset_libraries();
     for path in &paths {
         add_asset_to_library(&mut asset_libraries, path);
     }
@@ -132,9 +121,6 @@ mod wasm {
 
         #[wasm_bindgen(js_name = fetch_image_bytes, catch)]
         pub async fn fetch_image_bytes(url: &str, priority: &str) -> Result<JsValue, JsValue>;
-
-        #[wasm_bindgen(js_name = fetch_asset_list, catch)]
-        pub async fn fetch_asset_list(url: &str) -> Result<JsValue, JsValue>;
 
         #[wasm_bindgen(js_name = trigger_download, catch)]
         pub fn trigger_download(bytes: &[u8], filename: &str) -> Result<JsValue, JsValue>;

@@ -17,7 +17,7 @@ fn main() {
 
     fonts::write_subset_fonts(Path::new(&out_dir));
 
-    let manifest_path = Path::new(&out_dir).join("asset_manifest.json");
+    let art_files_path = Path::new(&out_dir).join("art_files.rs");
 
     let mut files = Vec::new();
     let art_dir = Path::new("../art");
@@ -41,11 +41,11 @@ fn main() {
 
     files.sort();
 
-    let json = serde_json::json!({ "files": files });
-    let mut file = File::create(&manifest_path).expect("Failed to create manifest file");
-    file.write_all(json.to_string().as_bytes())
-        .expect("Failed to write to manifest file");
-
-    let assets_manifest_path = Path::new("../assets").join("asset_manifest.json");
-    fs::copy(&manifest_path, &assets_manifest_path).expect("Failed to copy manifest to assets");
+    // Baked into the web build, so the art list always matches the code that reads it
+    let mut file = File::create(&art_files_path).expect("Failed to create art file list");
+    writeln!(file, "pub const ART_FILES: &[&str] = &[").expect("Failed to write art file list");
+    for file_name in &files {
+        writeln!(file, "    {file_name:?},").expect("Failed to write art file list");
+    }
+    writeln!(file, "];").expect("Failed to write art file list");
 }
