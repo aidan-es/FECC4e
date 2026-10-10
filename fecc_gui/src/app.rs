@@ -986,7 +986,7 @@ impl FECharacterCreator {
             return;
         }
 
-        let filename = format!("{}.png", filename_stem);
+        let filename = format!("{filename_stem}.png");
 
         if let Err(e) = fecc_core::file_io::trigger_download(&bytes, &filename) {
             log::error!("Failed to trigger download: {e}");
@@ -997,7 +997,7 @@ impl FECharacterCreator {
         let normalised_character = self.get_normalised_character();
         match serde_json::to_string_pretty(&normalised_character) {
             Ok(json) => {
-                let filename = format!("{}.fecc", filename_stem);
+                let filename = format!("{filename_stem}.fecc");
                 if let Err(e) = fecc_core::file_io::trigger_download(json.as_bytes(), &filename) {
                     log::error!("Failed to trigger download: {e}");
                 }
@@ -1032,7 +1032,9 @@ impl FECharacterCreator {
                             &asset_libraries,
                         )
                     });
-                sender.unbounded_send(result).unwrap();
+                if sender.unbounded_send(result).is_err() {
+                    log::warn!("Character receiver dropped before the loaded save was sent");
+                }
             }
         });
     }

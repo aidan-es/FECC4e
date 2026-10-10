@@ -795,8 +795,10 @@ impl FECharacterCreator {
                             let file_name = file.file_name();
                             let bytes = file.read().await;
                             let result =
-                                fecc_core::asset::Asset::try_from_bytes(&file_name, &*bytes);
-                            sender.unbounded_send(result).unwrap();
+                                fecc_core::asset::Asset::try_from_bytes(&file_name, &bytes);
+                            if sender.unbounded_send(result).is_err() {
+                                log::warn!("Asset receiver dropped before the new art was sent");
+                            }
                         }
                     });
                 }

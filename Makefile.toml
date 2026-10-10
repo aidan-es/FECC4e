@@ -8,6 +8,7 @@ dependencies = [
     "check-wasm",
     "fmt",
     "clippy",
+    "clippy-wasm",
     "typos",
     "test-all",
     "test-doc",
@@ -34,6 +35,11 @@ args = ["fmt", "--all", "--", "--check"]
 description = "Runs clippy (linter)"
 command = "cargo"
 args = ["clippy", "--quiet", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings", "-W", "clippy::all"]
+
+[tasks.clippy-wasm]
+description = "Runs clippy (linter) for the WASM target, as web-only code is skipped by the native run"
+command = "cargo"
+args = ["clippy", "--quiet", "--package", "fe_character_creator", "--package", "fecc_core", "--target", "wasm32-unknown-unknown", "--", "-D", "warnings", "-W", "clippy::all"]
 
 [tasks.test-all]
 description = "Runs all tests"
