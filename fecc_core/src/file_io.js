@@ -21,11 +21,12 @@ export async function fetch_text(url) {
 /**
  * Fetches the binary content (bytes) of an image file from a given URL.
  * @param {string} url - The URL of the image file to fetch.
+ * @param {string} priority - The fetch priority hint: "auto" or "low" (for background preloading).
  * @returns {Promise<Uint8Array|null>} A promise that resolves with the image data as a Uint8Array, or null if an error occurs.
  */
-export async function fetch_image_bytes(url) {
+export async function fetch_image_bytes(url, priority) {
     try {
-        const response = await fetch(url);
+        const response = await fetch(url, { priority });
         if (!response.ok) {
             console.error(`HTTP error! status: ${response.status} for ${url}`);
             return null;

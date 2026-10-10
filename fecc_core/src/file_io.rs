@@ -131,7 +131,7 @@ mod wasm {
         pub async fn fetch_text(url: &str) -> Result<JsValue, JsValue>;
 
         #[wasm_bindgen(js_name = fetch_image_bytes, catch)]
-        pub async fn fetch_image_bytes(url: &str) -> Result<JsValue, JsValue>;
+        pub async fn fetch_image_bytes(url: &str, priority: &str) -> Result<JsValue, JsValue>;
 
         #[wasm_bindgen(js_name = fetch_asset_list, catch)]
         pub async fn fetch_asset_list(url: &str) -> Result<JsValue, JsValue>;
@@ -165,9 +165,32 @@ pub async fn load_image_bytes(path: &Path) -> Result<Vec<u8>, Box<dyn Error + Se
     Ok(tokio::fs::read(path).await?)
 }
 
+/// Asynchronously loads the raw bytes of an image file for background preloading.
+///
+/// The same as [`load_image_bytes`] on native, where there is no network to share.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn preload_image_bytes(path: &Path) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+    load_image_bytes(path).await
+}
+
 /// Asynchronously loads the raw bytes of an image file (WASM version).
 #[cfg(target_arch = "wasm32")]
 pub async fn load_image_bytes(path: &Path) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+    fetch_image(path, "auto").await
+}
+
+/// Asynchronously loads the raw bytes of an image file for background preloading (WASM version).
+///
+/// Fetches at low priority, so the browser and server can put images the user is
+/// waiting on first.
+#[cfg(target_arch = "wasm32")]
+pub async fn preload_image_bytes(path: &Path) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+    fetch_image(path, "low").await
+}
+
+/// Fetches an image file with the given fetch priority hint.
+#[cfg(target_arch = "wasm32")]
+async fn fetch_image(path: &Path, priority: &str) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
     let path = path.to_str().ok_or("Invalid path")?;
     // Encode each part of the path, as file names may contain tags such as `{Iscaneus}`
     let url = path
@@ -175,7 +198,7 @@ pub async fn load_image_bytes(path: &Path) -> Result<Vec<u8>, Box<dyn Error + Se
         .map(|part| String::from(js_sys::encode_uri_component(part)))
         .collect::<Vec<_>>()
         .join("/");
-    let bytes_val = wasm::fetch_image_bytes(&url)
+    let bytes_val = wasm::fetch_image_bytes(&url, priority)
         .await
         .map_err(|e| e.as_string().unwrap_or_else(|| "JS error".to_string()))?;
     let bytes: Vec<u8> = js_sys::Uint8Array::new(&bytes_val).to_vec();

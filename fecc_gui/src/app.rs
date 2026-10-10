@@ -8,7 +8,9 @@ use fecc_core::asset::{Asset, AssetType};
 use fecc_core::asset_tags::{AssetFilter, AvailableTags, TagChoice};
 use fecc_core::character::{Character, CharacterPart, ColourPalette, Colourable, Shade};
 use fecc_core::export::ExportSize;
-use fecc_core::file_io::{load_asset_libraries, load_colours_from_csv, load_image_bytes};
+use fecc_core::file_io::{
+    load_asset_libraries, load_colours_from_csv, load_image_bytes, preload_image_bytes,
+};
 use fecc_core::types::Point;
 
 use ahash::{HashMap, HashSet};
@@ -20,6 +22,7 @@ use futures_util::future::join_all;
 use image::RgbaImage;
 use indexmap::IndexMap;
 use itertools::iproduct;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use strum::IntoEnumIterator as _;
@@ -27,6 +30,9 @@ use strum_macros::EnumIter;
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
+
+/// How many images the background preload fetches at once.
+const PRELOAD_BATCH_SIZE: usize = 16;
 
 type ImageReceiver = Option<mpsc::UnboundedReceiver<(String, Result<Arc<RgbaImage>, String>)>>;
 pub(crate) type ImageSender = mpsc::UnboundedSender<(String, Result<Arc<RgbaImage>, String>)>;
@@ -120,6 +126,14 @@ pub struct FECharacterCreator {
     image_sender: ImageSender,
     #[serde(skip)]
     images_in_flight: HashSet<String>,
+    /// Loads for what the user is looking at, which the preload waits behind
+    #[serde(skip)]
+    visible_loads: HashSet<String>,
+    /// Art still to load in the background, so it shows instantly when first needed
+    #[serde(skip)]
+    preload_queue: VecDeque<(AssetType, String)>,
+    #[serde(skip)]
+    preload_in_flight: HashSet<String>,
 
     #[serde(skip)]
     toasts: Toasts,
@@ -218,6 +232,9 @@ impl Default for FECharacterCreator {
             image_receiver: None,
             image_sender: mpsc::unbounded().0,
             images_in_flight: Default::default(),
+            visible_loads: Default::default(),
+            preload_queue: Default::default(),
+            preload_in_flight: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             tokio_runtime: Arc::new(Runtime::new().expect("Failed to create Tokio runtime")),
             selected_part: None,
@@ -372,30 +389,8 @@ impl FECharacterCreator {
 
             if !self.images_in_flight.contains(&asset.id) {
                 self.images_in_flight.insert(asset.id.clone());
-                let sender = self.image_sender.clone();
-                let path_buf = asset.path.clone();
-                let ctx_clone = ctx.clone();
-                let asset_id = asset.id.clone();
-
-                let task = async move {
-                    let result = match load_image_bytes(&path_buf).await {
-                        Ok(bytes) => match image::load_from_memory(&bytes) {
-                            Ok(img) => Ok(Arc::new(img.to_rgba8())),
-                            Err(e) => Err(e.to_string()),
-                        },
-                        Err(e) => Err(e.to_string()),
-                    };
-                    sender
-                        .unbounded_send((asset_id, result))
-                        .expect("Failed to send image result");
-                    ctx_clone.request_repaint();
-                };
-
-                #[cfg(target_arch = "wasm32")]
-                wasm_bindgen_futures::spawn_local(task);
-
-                #[cfg(not(target_arch = "wasm32"))]
-                self.tokio_runtime.spawn(task);
+                self.visible_loads.insert(asset.id.clone());
+                self.spawn_image_loads(ctx, vec![(asset.id.clone(), asset.path.clone())], false);
             }
 
             return None;
@@ -433,6 +428,94 @@ impl FECharacterCreator {
         } else {
             None
         }
+    }
+
+    /// Loads and decodes images in one background task, then repaints once for them all.
+    ///
+    /// Preloads fetch at low priority, behind anything the user is waiting on.
+    fn spawn_image_loads(&self, ctx: &Context, images: Vec<(String, PathBuf)>, preload: bool) {
+        let sender = self.image_sender.clone();
+        let ctx = ctx.clone();
+
+        let task = async move {
+            let results = join_all(images.into_iter().map(|(id, path)| async move {
+                let bytes = if preload {
+                    preload_image_bytes(&path).await
+                } else {
+                    load_image_bytes(&path).await
+                };
+                let result = match bytes {
+                    Ok(bytes) => image::load_from_memory(&bytes)
+                        .map(|img| Arc::new(img.to_rgba8()))
+                        .map_err(|e| e.to_string()),
+                    Err(e) => Err(e.to_string()),
+                };
+                (id, result)
+            }))
+            .await;
+
+            for result in results {
+                if sender.unbounded_send(result).is_err() {
+                    log::warn!("Image receiver dropped before the images were sent");
+                    return;
+                }
+            }
+            ctx.request_repaint();
+        };
+
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(task);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        self.tokio_runtime.spawn(task);
+    }
+
+    /// Queues every asset for the background preload, in asset type order.
+    fn queue_preload(&mut self) {
+        self.preload_queue = AssetType::iter()
+            .filter_map(|asset_type| {
+                self.asset_libraries
+                    .get(&asset_type)
+                    .map(|library| library.keys().map(move |id| (asset_type, id.clone())))
+            })
+            .flatten()
+            .collect();
+    }
+
+    /// Starts the next preload batch, but only while nothing the user is looking at is loading.
+    ///
+    /// Each batch repaints once when done, which calls this again, so the preload runs
+    /// itself to the end without input.
+    pub(crate) fn continue_preload(&mut self, ctx: &Context) {
+        if !self.visible_loads.is_empty() || !self.preload_in_flight.is_empty() {
+            return;
+        }
+
+        let mut batch = Vec::with_capacity(PRELOAD_BATCH_SIZE);
+        while batch.len() < PRELOAD_BATCH_SIZE
+            && let Some((asset_type, id)) = self.preload_queue.pop_front()
+        {
+            if self.images_in_flight.contains(&id) {
+                continue;
+            }
+            if let Some(asset) = self
+                .asset_libraries
+                .get(&asset_type)
+                .and_then(|library| library.get(&id))
+                && asset.image_data.is_none()
+            {
+                batch.push((id, asset.path.clone()));
+            }
+        }
+
+        if batch.is_empty() {
+            return;
+        }
+        for (id, _) in &batch {
+            self.images_in_flight.insert(id.clone());
+            self.preload_in_flight.insert(id.clone());
+        }
+        self.spawn_image_loads(ctx, batch, true);
     }
 
     fn display_assets(
@@ -478,6 +561,19 @@ impl FECharacterCreator {
                         }
 
                         let main_texture_opt = self.get_or_load_texture(ctx, asset);
+                        // Requested with the hair, so the two arrive together
+                        let back_texture_opt = if asset.asset_type == AssetType::Hair
+                            && let Some(back_part_id) = &asset.back_part
+                            && let Some(back_asset) = self
+                                .asset_libraries
+                                .get(&AssetType::HairBack)
+                                .and_then(|lib| lib.get(back_part_id))
+                                .cloned()
+                        {
+                            self.get_or_load_texture(ctx, &back_asset)
+                        } else {
+                            None
+                        };
 
                         let button_response = ui.add(
                             egui::Button::new("")
@@ -489,16 +585,7 @@ impl FECharacterCreator {
                             let rect = button_response.rect;
                             let painter = ui.painter_at(rect);
 
-                            if asset.asset_type == AssetType::Hair
-                                && let Some(back_part_id) = &asset.back_part
-                                && let Some(back_asset) = self
-                                    .asset_libraries
-                                    .get(&AssetType::HairBack)
-                                    .and_then(|lib| lib.get(back_part_id))
-                                    .cloned()
-                                && let Some(back_texture) =
-                                    self.get_or_load_texture(ctx, &back_asset)
-                            {
+                            if let Some(back_texture) = back_texture_opt {
                                 painter.image(
                                     back_texture.id(),
                                     rect,

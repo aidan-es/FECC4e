@@ -752,6 +752,9 @@ impl eframe::App for FECharacterCreator {
             self.update_rect(&ctx, ui);
         });
 
+        // After the panels, so this frame's visible loads are already queued ahead of it
+        self.continue_preload(&ctx);
+
         self.new_active_tab = false;
         self.randomise_used = false;
         self.toasts.show(&ctx);
@@ -895,13 +898,7 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
                         }
                     }
 
-                    if let Some(hair_back_library) =
-                        self.asset_libraries.get(&AssetType::HairBack).cloned()
-                    {
-                        for asset in hair_back_library.values() {
-                            self.get_or_load_texture(ctx, asset);
-                        }
-                    }
+                    self.queue_preload();
                 }
                 Ok(None) => {
                     self.asset_libraries_receiver = Some(rx);
@@ -914,6 +911,8 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
     fn update_stored_image_data_cache(&mut self) {
         if let Some(rx) = self.image_receiver.as_mut() {
             while let Ok((id, result)) = rx.try_recv() {
+                self.visible_loads.remove(&id);
+                self.preload_in_flight.remove(&id);
                 match result {
                     Ok(image_data) => {
                         let asset_type: Result<AssetType, _> =
