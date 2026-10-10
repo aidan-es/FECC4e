@@ -912,7 +912,6 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
     fn update_stored_image_data_cache(&mut self) {
         if let Some(rx) = self.image_receiver.as_mut() {
             while let Ok((id, result)) = rx.try_recv() {
-                self.images_in_flight.remove(&id);
                 match result {
                     Ok(image_data) => {
                         let asset_type: Result<AssetType, _> =
@@ -926,7 +925,9 @@ Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
                                     .and_then(|lib| lib.get_mut(&id))
                                 {
                                     asset.image_data = Some(image_data);
+                                    self.images_in_flight.remove(&id);
                                 } else {
+                                    // Stays in flight so it isn't fetched again every frame
                                     log::warn!("Received image for unknown asset: {id}");
                                 }
                             }

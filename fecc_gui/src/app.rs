@@ -365,6 +365,11 @@ impl FECharacterCreator {
         }
 
         if asset.image_data.is_none() {
+            // Wait for the libraries, as there is nowhere to store the image until then
+            if self.asset_libraries_receiver.is_some() {
+                return None;
+            }
+
             if !self.images_in_flight.contains(&asset.id) {
                 self.images_in_flight.insert(asset.id.clone());
                 let sender = self.image_sender.clone();
