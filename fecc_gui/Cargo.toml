@@ -48,7 +48,7 @@ tokio = { workspace = true, features = ["fs", "macros", "rt-multi-thread"] }
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # glow (WebGL2) rather than the (new) default wgpu, which is ~1.75 MB larger for no real benefit
-eframe = { workspace = true, features = ["default_fonts", "glow", "persistence", "web_screen_reader"] }
+eframe = { workspace = true, features = ["glow", "persistence", "web_screen_reader"] }
 wasm-bindgen = { workspace = true }
 web-sys = { workspace = true }
 js-sys = { workspace = true }
@@ -59,6 +59,16 @@ getrandom_03 = { workspace = true, features = ["wasm_js"] } #Requied to enable w
 
 [build-dependencies]
 serde_json = { workspace = true }
+epaint_default_fonts = { workspace = true }
+read-fonts = { workspace = true }
+skera = { workspace = true }
+write-fonts = { workspace = true }
+
+[dev-dependencies]
+epaint_default_fonts = { workspace = true }
+proc-macro2 = { workspace = true }
+read-fonts = { workspace = true }
+syn = { workspace = true }
 
 [lints]
 workspace = true

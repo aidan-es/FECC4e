@@ -275,6 +275,10 @@ impl FECharacterCreator {
         // Needed for the SVG icons on the canvas and in the colour panel
         egui_extras::install_image_loaders(&cc.egui_ctx);
 
+        // Use smaller subsets of egui's default fonts
+        cc.egui_ctx
+            .set_fonts(crate::fonts::subset_font_definitions());
+
         let mut fe_character_creator: Self = if let Some(storage) = cc.storage {
             if let Some(mut saved_app) = eframe::get_value::<Self>(storage, eframe::APP_KEY) {
                 saved_app.is_character_normalised = true;

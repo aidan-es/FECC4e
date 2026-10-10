@@ -18,7 +18,7 @@ opt-level = 2
 [workspace.dependencies]
 csv = "1.4.0"
 eframe = { version = "0.36.2", default-features = false } # Features chosen per platform in fecc_gui
-egui = "0.36.2"
+egui = { version = "0.36.2", default-features = false }
 egui-notify = "0.23.0"
 egui_commonmark = "0.25.0"
 egui_extras = "0.36.2"
@@ -54,6 +54,14 @@ js-sys = "0.3.106"
 serde-wasm-bindgen = "0.6.5"
 getrandom = { version = "0.4.3" }
 getrandom_03 = { package = "getrandom", version = "0.3.4" } #Requied to enable wasm_js for the older getrandom still used by ahash
+# Build Only:
+epaint_default_fonts = "0.36.2"
+read-fonts = "0.45.0"
+skera = "0.8.0"
+write-fonts = "0.54.0"
+# Test Only:
+proc-macro2 = "1.0.107"
+syn = "3.0.7"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

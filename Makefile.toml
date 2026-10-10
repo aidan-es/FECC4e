@@ -2,7 +2,7 @@
 default_to_workspace = false
 
 [tasks.check]
-
+clear = true # Don't inherit cargo-make's built-in `cargo check` command
 dependencies = [
     "check-all",
     "check-wasm",
