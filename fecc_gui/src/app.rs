@@ -455,6 +455,12 @@ impl FECharacterCreator {
                 } else {
                     load_image_bytes(&path).await
                 };
+
+                // Let the browser draw first, so images that arrive together aren't all decoded
+                // in one go, which freezes the page on slow processors
+                #[cfg(target_arch = "wasm32")]
+                yield_to_browser().await;
+
                 let result = match bytes {
                     Ok(bytes) => image::load_from_memory(&bytes)
                         .map(|img| Arc::new(img.to_rgba8()))
@@ -1135,6 +1141,29 @@ impl FECharacterCreator {
                 }
             }
         });
+    }
+}
+
+/// Waits for the browser's next turn, giving it a chance to draw a frame.
+///
+/// Uses a `MessageChannel` message rather than `setTimeout(0)`, which browsers delay by at least
+/// 4 ms once repeated.
+#[cfg(target_arch = "wasm32")]
+async fn yield_to_browser() {
+    #[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
+export function next_turn() {
+    return new Promise((resolve) => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = () => resolve();
+        channel.port2.postMessage(null);
+    });
+}"#)]
+    extern "C" {
+        fn next_turn() -> js_sys::Promise;
+    }
+
+    if let Err(error) = wasm_bindgen_futures::JsFuture::from(next_turn()).await {
+        log::warn!("Failed to yield to the browser: {error:?}");
     }
 }
 
