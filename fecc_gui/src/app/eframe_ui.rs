@@ -1003,34 +1003,33 @@ FECC4e's text uses subsets of egui's default fonts:
                                 .min_scrolled_height(100.0)
                                 .max_scroll_height(available_height);
 
-                            table.body(|mut body| {
-                                for i in 0..rows {
-                                    body.row(20.0, |mut row| {
-                                        for ii in 0..columns {
-                                            row.col(|ui| {
-                                                if i * columns + ii < palette_colours.len() {
-                                                    let colour =
-                                                        palette_colours[(i * columns) + ii];
-                                                    if ui
-                                                        .add(
-                                                            Button::new("")
-                                                                .min_size(vec2(20.0, 20.0))
-                                                                .fill(to_c32(colour)),
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        self.character
-                                                            .character_colours
-                                                            .entry(colourable)
-                                                            .or_default()
-                                                            .set(colour);
-                                                        self.texture_cache.clear();
-                                                    }
+                            // Only lay out the rows scrolled into view
+                            table.body(|body| {
+                                body.rows(20.0, rows, |mut row| {
+                                    let i = row.index();
+                                    for ii in 0..columns {
+                                        row.col(|ui| {
+                                            if i * columns + ii < palette_colours.len() {
+                                                let colour = palette_colours[(i * columns) + ii];
+                                                if ui
+                                                    .add(
+                                                        Button::new("")
+                                                            .min_size(vec2(20.0, 20.0))
+                                                            .fill(to_c32(colour)),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    self.character
+                                                        .character_colours
+                                                        .entry(colourable)
+                                                        .or_default()
+                                                        .set(colour);
+                                                    self.texture_cache.clear();
                                                 }
-                                            });
-                                        }
-                                    });
-                                }
+                                            }
+                                        });
+                                    }
+                                });
                             });
                         });
                 }
