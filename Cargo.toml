@@ -7,7 +7,7 @@ members = [
 ]
 
 [profile.release]
-opt-level = "z"
+opt-level = "s"    # Same download as "z" once compressed, but a 13% smaller wasm to compile
 lto = true         # Enable Link Time Optimization
 codegen-units = 1  # Reduce opportunities for parallelism in exchange for better optimisation
 
