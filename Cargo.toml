@@ -47,6 +47,7 @@ wasm-bindgen-futures = "0.4.79"
 chrono = "0.4.45"
 fern = "0.7.1"
 dirs-next = "2.0.0"
+winit = "0.30.13"
 # Web Only:
 wasm-bindgen = "0.2.129"
 web-sys = "0.3.106"
