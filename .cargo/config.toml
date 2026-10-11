@@ -1,0 +1,6 @@
+# Use WebAssembly SIMD in the web build.
+#
+# egui's text rendering is written for SIMD, and without it falls back to much larger plain code.
+# This shrinks the wasm by ~1.3 MB raw (~130 KB compressed).
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]
