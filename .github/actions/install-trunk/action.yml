@@ -1,0 +1,13 @@
+name: Install Trunk
+description: Downloads the prebuilt Trunk release used by every workflow (Linux x86-64 runners)
+runs:
+  using: composite
+  steps:
+    - name: Download Trunk
+      shell: bash
+      env:
+        TRUNK_VERSION: v0.21.14
+      run: |
+        url="https://github.com/trunk-rs/trunk/releases/download/$TRUNK_VERSION/trunk-x86_64-unknown-linux-gnu.tar.gz"
+        curl -sSfL "$url" | tar -xz -C "$HOME/.cargo/bin"
+        trunk --version

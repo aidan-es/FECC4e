@@ -2,6 +2,7 @@
 //! Generates a sprite sheet of random characters.
 //! Effectively a proof of concept API style usage of the FECC core library.
 use fecc_core::asset::AssetType;
+use fecc_core::asset_tags::AssetFilter;
 use fecc_core::character::{Character, Colourable};
 use fecc_core::export::export_character;
 use fecc_core::file_io::{load_asset_libraries, load_colours_from_csv, load_image_bytes};
@@ -82,6 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &asset_libraries,
             &types_to_randomize,
             ui_canvas_size,
+            &AssetFilter::default(),
         );
 
         randomize_colours(&mut character, &colour_palettes);

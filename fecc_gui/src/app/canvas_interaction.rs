@@ -1,11 +1,11 @@
-use crate::app::{Corner, Interaction};
-use crate::extensions::color32::Contrast as _;
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
 use crate::FECharacterCreator;
+use crate::app::{Corner, ICON_TEXTURE_OPTIONS, Interaction};
+use crate::extensions::color32::Contrast as _;
+use ahash::HashMap;
 use eframe::emath::{Pos2, Rect, Rot2, Vec2, pos2, vec2};
 use eframe::epaint::{Color32, Stroke};
 use egui::Order::Background;
-use egui::ahash::HashMap;
 use egui::{Context, Id, LayerId, Painter, Response, Ui};
 use fecc_core::asset::AssetType;
 use fecc_core::character::CharacterPart;
@@ -100,8 +100,8 @@ impl FECharacterCreator {
             canvas_rect,
         );
 
-        let handle_stroke = Stroke::new(1.0, Color32::WHITE);
-        let line_stroke = Stroke::new(1.0, Color32::from_gray(190));
+        let handle_stroke = Stroke::new(1.0_f32, Color32::WHITE);
+        let line_stroke = Stroke::new(1.0_f32, Color32::from_gray(190));
         painter.line_segment([corners_abs[0], corners_abs[1]], line_stroke);
         painter.line_segment([corners_abs[1], corners_abs[2]], line_stroke);
         painter.line_segment([corners_abs[2], corners_abs[3]], line_stroke);
@@ -120,7 +120,8 @@ impl FECharacterCreator {
             Rect::from_center_size(flip_handle_pos, vec2(1.0, 1.0) * FLIP_HANDLE_RADIUS * 2.0);
         let flip_response = ui.interact(flip_rect, ui.id().with("flip"), egui::Sense::click());
 
-        let source = egui::Image::new(egui::include_image!("../../../assets/flip.svg"));
+        let source = egui::Image::new(egui::include_image!("../../../assets/flip.png"))
+            .texture_options(ICON_TEXTURE_OPTIONS);
         let texture_id = source
             .load_for_size(ui.ctx(), Vec2::splat(24.0))
             .expect("Failed to load flip icon")
@@ -222,7 +223,8 @@ impl FECharacterCreator {
 
             let rotation_angle = rotated_diag.rot90().angle();
 
-            let source = egui::Image::new(egui::include_image!("../../../assets/rotate.svg"));
+            let source = egui::Image::new(egui::include_image!("../../../assets/rotate.png"))
+                .texture_options(ICON_TEXTURE_OPTIONS);
             let rotate_texture_id = source
                 .load_for_size(ui.ctx(), Vec2::splat(20.0))
                 .expect("Failed to load rotate icon")

@@ -2,12 +2,13 @@
 default_to_workspace = false
 
 [tasks.check]
-
+clear = true # Don't inherit cargo-make's built-in `cargo check` command
 dependencies = [
     "check-all",
     "check-wasm",
     "fmt",
     "clippy",
+    "clippy-wasm",
     "typos",
     "test-all",
     "test-doc",
@@ -35,6 +36,11 @@ description = "Runs clippy (linter)"
 command = "cargo"
 args = ["clippy", "--quiet", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings", "-W", "clippy::all"]
 
+[tasks.clippy-wasm]
+description = "Runs clippy (linter) for the WASM target, as web-only code is skipped by the native run"
+command = "cargo"
+args = ["clippy", "--quiet", "--package", "fe_character_creator", "--package", "fecc_core", "--target", "wasm32-unknown-unknown", "--", "-D", "warnings", "-W", "clippy::all"]
+
 [tasks.test-all]
 description = "Runs all tests"
 command = "cargo"
@@ -47,7 +53,7 @@ args = ["test", "--quiet", "--workspace", "--doc"]
 
 [tasks.typos]
 description = "Checks for typos"
-install_crate = "typos-cli"
+install_crate = { crate_name = "typos-cli", binary = "typos", test_arg = "--help", version = "1.50.3" }
 command = "typos"
 
 [tasks.build-trunk]
@@ -55,6 +61,13 @@ description = "Builds the Trunk (WASM) project"
 cwd = "fecc_gui"
 command = "trunk"
 args = ["build"]
+
+[tasks.serve]
+description = "Serves the Trunk (WASM) project locally"
+cwd = "fecc_gui"
+command = "trunk"
+args = ["serve", "--open", "--release"]
+
 
 [tasks.post-check-message]
 description = "Prints a success message"

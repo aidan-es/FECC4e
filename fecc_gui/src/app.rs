@@ -3,13 +3,17 @@ use std::cmp::PartialEq;
 mod canvas_interaction;
 mod eframe_ui;
 
+use crate::extensions::tag_label::{TagKind, TagLabel as _};
 use fecc_core::asset::{Asset, AssetType};
+use fecc_core::asset_tags::{AssetFilter, AvailableTags, TagChoice};
 use fecc_core::character::{Character, CharacterPart, ColourPalette, Colourable, Shade};
 use fecc_core::export::ExportSize;
-use fecc_core::file_io::{load_asset_libraries, load_colours_from_csv, load_image_bytes};
+use fecc_core::file_io::{
+    load_asset_libraries, load_colours_from_csv, load_image_bytes, preload_image_bytes,
+};
 use fecc_core::types::Point;
 
-use egui::ahash::{HashMap, HashSet};
+use ahash::{HashMap, HashSet};
 use egui::{Align, Color32, ColorImage, Context, Pos2, Rect, Shape, Ui, Vec2, pos2, vec2};
 use egui_commonmark::CommonMarkCache;
 use egui_notify::{Anchor, Toasts};
@@ -18,6 +22,7 @@ use futures_util::future::join_all;
 use image::RgbaImage;
 use indexmap::IndexMap;
 use itertools::iproduct;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use strum::IntoEnumIterator as _;
@@ -25,6 +30,16 @@ use strum_macros::EnumIter;
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
+
+/// How many images the background preload fetches at once.
+const PRELOAD_BATCH_SIZE: usize = 16;
+
+/// Texture options for the PNG icons, which are drawn smaller than their source images.
+///
+/// The icons are rendered from the SVGs in `assets` at 4× the size they're drawn at. With
+/// mipmaps, that keeps them sharp at 1× and 2× display scales, and smooth in between.
+pub(crate) const ICON_TEXTURE_OPTIONS: egui::TextureOptions =
+    egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
 
 type ImageReceiver = Option<mpsc::UnboundedReceiver<(String, Result<Arc<RgbaImage>, String>)>>;
 pub(crate) type ImageSender = mpsc::UnboundedSender<(String, Result<Arc<RgbaImage>, String>)>;
@@ -64,8 +79,17 @@ pub enum Orientation {
 
 #[derive(Debug, Clone, Copy)]
 pub struct FitResult {
-    pub max_side: f32,
+    pub portrait_size: Vec2,
+    pub token_size: Vec2,
     pub orientation: Orientation,
+}
+
+/// A unique colour count, with the character and canvas sizes it was counted from.
+struct ColourCount {
+    character: Character,
+    portrait_size: Vec2,
+    token_size: Vec2,
+    result: Result<(usize, bool), &'static str>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -83,13 +107,21 @@ pub struct FECharacterCreator {
     randomise_colours_too: bool,
 
     #[serde(skip)]
-    search_queries: HashMap<AssetType, String>,
+    search_query: String,
+    asset_filter: AssetFilter,
+    filters_expanded: bool,
+    #[serde(skip)]
+    available_tags: AvailableTags,
     colour_picker_open_state: HashMap<(Colourable, Shade), bool>,
     outline_picker_open_state: HashMap<AssetType, bool>,
     portrait_rect: Rect,
     token_rect: Rect,
 
     export_size_selection: ExportSize,
+    custom_portrait_width: u32,
+    custom_portrait_height: u32,
+    custom_token_width: u32,
+    custom_token_height: u32,
 
     #[serde(skip)]
     colour_palettes: std::collections::HashMap<Colourable, ColourPalette>,
@@ -109,6 +141,14 @@ pub struct FECharacterCreator {
     image_sender: ImageSender,
     #[serde(skip)]
     images_in_flight: HashSet<String>,
+    /// Loads for what the user is looking at, which the preload waits behind
+    #[serde(skip)]
+    visible_loads: HashSet<String>,
+    /// Art still to load in the background, so it shows instantly when first needed
+    #[serde(skip)]
+    preload_queue: VecDeque<(AssetType, String)>,
+    #[serde(skip)]
+    preload_in_flight: HashSet<String>,
 
     #[serde(skip)]
     toasts: Toasts,
@@ -123,6 +163,8 @@ pub struct FECharacterCreator {
     pub interaction: Option<Interaction>,
     #[serde(skip)]
     pub content_bounds_cache: HashMap<PathBuf, Rect>,
+    #[serde(skip)]
+    colour_count: Option<ColourCount>,
 
     assets_panel_expanded: bool,
     colour_panel_expanded: bool,
@@ -178,7 +220,10 @@ impl Default for FECharacterCreator {
             new_active_tab: true,
             randomise_used: false,
             randomise_colours_too: false,
-            search_queries: Default::default(),
+            search_query: String::new(),
+            asset_filter: Default::default(),
+            filters_expanded: true,
+            available_tags: Default::default(),
             colour_picker_open_state: iproduct!(Colourable::iter(), Shade::iter())
                 .map(|combo| (combo, false))
                 .collect(),
@@ -194,17 +239,25 @@ impl Default for FECharacterCreator {
             portrait_rect: Rect::NOTHING,
             token_rect: Rect::NOTHING,
             export_size_selection: ExportSize::Original,
+            custom_portrait_width: 96,
+            custom_portrait_height: 96,
+            custom_token_width: 64,
+            custom_token_height: 64,
             colour_palettes: Default::default(),
             palettes_receiver: None,
             asset_libraries_receiver: None,
             image_receiver: None,
             image_sender: mpsc::unbounded().0,
             images_in_flight: Default::default(),
+            visible_loads: Default::default(),
+            preload_queue: Default::default(),
+            preload_in_flight: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             tokio_runtime: Arc::new(Runtime::new().expect("Failed to create Tokio runtime")),
             selected_part: None,
             interaction: None,
             content_bounds_cache: HashMap::default(),
+            colour_count: None,
             assets_panel_expanded: true,
             colour_panel_expanded: true,
             export_panel_expanded: false,
@@ -237,6 +290,13 @@ impl Default for FECharacterCreator {
 
 impl FECharacterCreator {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Needed for the PNG icons on the canvas and in the colour panel
+        egui_extras::install_image_loaders(&cc.egui_ctx);
+
+        // Use smaller subsets of egui's default fonts
+        cc.egui_ctx
+            .set_fonts(crate::fonts::subset_font_definitions());
+
         let mut fe_character_creator: Self = if let Some(storage) = cc.storage {
             if let Some(mut saved_app) = eframe::get_value::<Self>(storage, eframe::APP_KEY) {
                 saved_app.is_character_normalised = true;
@@ -249,8 +309,19 @@ impl FECharacterCreator {
             Default::default()
         };
 
+        if let ExportSize::Custom { portrait, token } = fe_character_creator.export_size_selection {
+            fe_character_creator.custom_portrait_width = portrait.0;
+            fe_character_creator.custom_portrait_height = portrait.1;
+            fe_character_creator.custom_token_width = token.0;
+            fe_character_creator.custom_token_height = token.1;
+        }
+
         #[cfg(not(target_arch = "wasm32"))]
         let tokio_runtime = fe_character_creator.tokio_runtime.clone();
+
+        // Repaint once each load finish so the results show without waiting for input
+        let palettes_ctx = cc.egui_ctx.clone();
+        let assets_ctx = cc.egui_ctx.clone();
 
         let (palettes_tx, palettes_rx) = futures_channel::oneshot::channel();
         let palettes_task = async move {
@@ -284,6 +355,7 @@ impl FECharacterCreator {
             if palettes_tx.send(palettes).is_err() {
                 log::warn!("Palettes receiver dropped before palettes were sent");
             }
+            palettes_ctx.request_repaint();
         };
 
         let (assets_tx, assets_rx) = futures_channel::oneshot::channel();
@@ -298,6 +370,7 @@ impl FECharacterCreator {
                     log::error!("Failed to load asset libraries: {e}");
                 }
             }
+            assets_ctx.request_repaint();
         };
 
         #[cfg(target_arch = "wasm32")]
@@ -331,32 +404,15 @@ impl FECharacterCreator {
         }
 
         if asset.image_data.is_none() {
+            // Wait for the libraries, as there is nowhere to store the image until then
+            if self.asset_libraries_receiver.is_some() {
+                return None;
+            }
+
             if !self.images_in_flight.contains(&asset.id) {
                 self.images_in_flight.insert(asset.id.clone());
-                let sender = self.image_sender.clone();
-                let path_buf = asset.path.clone();
-                let ctx_clone = ctx.clone();
-                let asset_id = asset.id.clone();
-
-                let task = async move {
-                    let result = match load_image_bytes(&path_buf).await {
-                        Ok(bytes) => match image::load_from_memory(&bytes) {
-                            Ok(img) => Ok(Arc::new(img.to_rgba8())),
-                            Err(e) => Err(e.to_string()),
-                        },
-                        Err(e) => Err(e.to_string()),
-                    };
-                    sender
-                        .unbounded_send((asset_id, result))
-                        .expect("Failed to send image result");
-                    ctx_clone.request_repaint();
-                };
-
-                #[cfg(target_arch = "wasm32")]
-                wasm_bindgen_futures::spawn_local(task);
-
-                #[cfg(not(target_arch = "wasm32"))]
-                self.tokio_runtime.spawn(task);
+                self.visible_loads.insert(asset.id.clone());
+                self.spawn_image_loads(ctx, vec![(asset.id.clone(), asset.path.clone())], false);
             }
 
             return None;
@@ -396,12 +452,106 @@ impl FECharacterCreator {
         }
     }
 
+    /// Loads and decodes images in one background task, then repaints once for them all.
+    ///
+    /// Preloads fetch at low priority, behind anything the user is waiting on.
+    fn spawn_image_loads(&self, ctx: &Context, images: Vec<(String, PathBuf)>, preload: bool) {
+        let sender = self.image_sender.clone();
+        let ctx = ctx.clone();
+
+        let task = async move {
+            let results = join_all(images.into_iter().map(|(id, path)| async move {
+                let bytes = if preload {
+                    preload_image_bytes(&path).await
+                } else {
+                    load_image_bytes(&path).await
+                };
+
+                // Let the browser draw first, so images that arrive together aren't all decoded
+                // in one go, which freezes the page on slow processors
+                #[cfg(target_arch = "wasm32")]
+                yield_to_browser().await;
+
+                let result = match bytes {
+                    Ok(bytes) => image::load_from_memory(&bytes)
+                        .map(|img| Arc::new(img.to_rgba8()))
+                        .map_err(|e| e.to_string()),
+                    Err(e) => Err(e.to_string()),
+                };
+                (id, result)
+            }))
+            .await;
+
+            for result in results {
+                if sender.unbounded_send(result).is_err() {
+                    log::warn!("Image receiver dropped before the images were sent");
+                    return;
+                }
+            }
+            ctx.request_repaint();
+        };
+
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(task);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        self.tokio_runtime.spawn(task);
+    }
+
+    /// Queues every asset for the background preload, in asset type order.
+    fn queue_preload(&mut self) {
+        self.preload_queue = AssetType::iter()
+            .filter_map(|asset_type| {
+                self.asset_libraries
+                    .get(&asset_type)
+                    .map(|library| library.keys().map(move |id| (asset_type, id.clone())))
+            })
+            .flatten()
+            .collect();
+    }
+
+    /// Starts the next preload batch, but only while nothing the user is looking at is loading.
+    ///
+    /// Each batch repaints once when done, which calls this again, so the preload runs
+    /// itself to the end without input.
+    pub(crate) fn continue_preload(&mut self, ctx: &Context) {
+        if !self.visible_loads.is_empty() || !self.preload_in_flight.is_empty() {
+            return;
+        }
+
+        let mut batch = Vec::with_capacity(PRELOAD_BATCH_SIZE);
+        while batch.len() < PRELOAD_BATCH_SIZE
+            && let Some((asset_type, id)) = self.preload_queue.pop_front()
+        {
+            if self.images_in_flight.contains(&id) {
+                continue;
+            }
+            if let Some(asset) = self
+                .asset_libraries
+                .get(&asset_type)
+                .and_then(|library| library.get(&id))
+                && asset.image_data.is_none()
+            {
+                batch.push((id, asset.path.clone()));
+            }
+        }
+
+        if batch.is_empty() {
+            return;
+        }
+        for (id, _) in &batch {
+            self.images_in_flight.insert(id.clone());
+            self.preload_in_flight.insert(id.clone());
+        }
+        self.spawn_image_loads(ctx, batch, true);
+    }
+
     fn display_assets(
         &mut self,
         ctx: &Context,
         ui: &mut Ui,
         library: &IndexMap<String, Asset>,
-        search_query: &str,
+        shown_assets: &[&Asset],
     ) -> Option<Asset> {
         let mut clicked_asset = None;
 
@@ -416,25 +566,42 @@ impl FECharacterCreator {
         let button_size = Vec2::splat(button_size_val);
 
         let spacing = ui.spacing().item_spacing.y;
-        let label_height = 20.0;
+        let show_tags = self.filters_expanded
+            && library
+                .values()
+                .any(|asset| !asset.categories.is_empty() || !asset.contributors.is_empty());
+        let label_height = if show_tags { 40.0 } else { 20.0 };
         let total_item_size = vec2(button_size.x, button_size.y + spacing + label_height);
 
-        for asset in library.iter().filter(|asset| {
-            search_query.is_empty() || asset.1.name.to_lowercase().contains(search_query)
-        }) {
+        let asset_filter = self.asset_filter.clone();
+        let mut tag_clicks = Vec::new();
+        for &asset in shown_assets {
             let (rect, response) = ui.allocate_at_least(total_item_size, egui::Sense::click());
 
             if ui.is_rect_visible(rect) {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                     ui.vertical(|ui| {
                         let mut selected = false;
-                        if let Some(part) = self.character.get_character_part(&asset.1.asset_type)
-                            && part.asset == *asset.1
+                        if let Some(part) = self.character.get_character_part(&asset.asset_type)
+                            && part.asset == *asset
                         {
                             selected = true;
                         }
 
-                        let main_texture_opt = self.get_or_load_texture(ctx, asset.1);
+                        let main_texture_opt = self.get_or_load_texture(ctx, asset);
+                        // Requested with the hair, so the two arrive together
+                        let back_texture_opt = if asset.asset_type == AssetType::Hair
+                            && let Some(back_part_id) = &asset.back_part
+                            && let Some(back_asset) = self
+                                .asset_libraries
+                                .get(&AssetType::HairBack)
+                                .and_then(|lib| lib.get(back_part_id))
+                                .cloned()
+                        {
+                            self.get_or_load_texture(ctx, &back_asset)
+                        } else {
+                            None
+                        };
 
                         let button_response = ui.add(
                             egui::Button::new("")
@@ -446,16 +613,7 @@ impl FECharacterCreator {
                             let rect = button_response.rect;
                             let painter = ui.painter_at(rect);
 
-                            if asset.1.asset_type == AssetType::Hair
-                                && let Some(back_part_id) = &asset.1.back_part
-                                && let Some(back_asset) = self
-                                    .asset_libraries
-                                    .get(&AssetType::HairBack)
-                                    .and_then(|lib| lib.get(back_part_id))
-                                    .cloned()
-                                && let Some(back_texture) =
-                                    self.get_or_load_texture(ctx, &back_asset)
-                            {
+                            if let Some(back_texture) = back_texture_opt {
                                 painter.image(
                                     back_texture.id(),
                                     rect,
@@ -484,15 +642,23 @@ impl FECharacterCreator {
                             button_response.scroll_to_me(Some(Align::TOP));
                         }
                         if button_response.clicked() {
-                            clicked_asset = Some(asset.1.clone());
+                            clicked_asset = Some(asset.clone());
                         }
-                        ui.label(asset.1.name.clone());
+                        if show_tags {
+                            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(&asset.name);
+                                tag_clicks.extend(asset_tablets(ui, asset, &asset_filter));
+                            });
+                        } else {
+                            ui.label(&asset.name);
+                        }
                     });
                 });
             } else {
                 let mut selected = false;
-                if let Some(part) = self.character.get_character_part(&asset.1.asset_type)
-                    && part.asset == *asset.1
+                if let Some(part) = self.character.get_character_part(&asset.asset_type)
+                    && part.asset == *asset
                 {
                     selected = true;
                 }
@@ -500,6 +666,16 @@ impl FECharacterCreator {
                 if selected && (self.randomise_used || self.new_active_tab) {
                     response.scroll_to_me(Some(Align::TOP));
                 }
+            }
+        }
+
+        for (kind, choice) in tag_clicks {
+            let chosen = match kind {
+                TagKind::Category => &mut self.asset_filter.categories,
+                TagKind::Artist => &mut self.asset_filter.contributors,
+            };
+            if !chosen.remove(&choice) {
+                chosen.insert(choice);
             }
         }
         clicked_asset
@@ -590,7 +766,13 @@ impl FECharacterCreator {
         )
     }
 
-    fn scale_character_parts(&mut self, scale_factor: f32, is_token: bool) {
+    fn scale_character_parts(
+        &mut self,
+        old_center: Point,
+        new_center: Point,
+        scale_factor: f32,
+        is_token: bool,
+    ) {
         let asset_types_to_scale = if is_token {
             vec![AssetType::Token]
         } else {
@@ -605,46 +787,32 @@ impl FECharacterCreator {
 
         for asset_type in asset_types_to_scale {
             if let Some(mut part) = self.character.get_character_part(&asset_type) {
-                part.position.x *= scale_factor;
-                part.position.y *= scale_factor;
+                let offset_x = (part.position.x - old_center.x) * scale_factor;
+                let offset_y = (part.position.y - old_center.y) * scale_factor;
+                part.position.x = new_center.x + offset_x;
+                part.position.y = new_center.y + offset_y;
                 part.scale *= scale_factor;
                 self.character.set_character_part(&asset_type, part);
             }
         }
     }
 
+    /// The canvas size on screen, or the export size before the canvas is first laid out.
+    fn canvas_size(&self, canvas_type: CanvasType) -> Point {
+        let (rect, (width, height)) = match canvas_type {
+            CanvasType::Portrait => (self.portrait_rect, self.export_size_selection.portrait()),
+            CanvasType::Token => (self.token_rect, self.export_size_selection.token()),
+        };
+        if rect.width() > 0.0 {
+            Point::new(rect.width(), rect.height())
+        } else {
+            Point::new(width as f32, height as f32)
+        }
+    }
+
     fn get_normalised_character(&self) -> Character {
         let mut normalised_character = self.character.clone();
-
-        let portrait_size = self.portrait_rect.size();
-        if portrait_size.x > 0.0 && portrait_size.y > 0.0 {
-            for asset_type in [
-                AssetType::Armour,
-                AssetType::Face,
-                AssetType::Hair,
-                AssetType::HairBack,
-                AssetType::Accessory,
-            ] {
-                if let Some(mut part) = normalised_character.get_character_part(&asset_type) {
-                    part.position.x /= portrait_size.x;
-                    part.position.y /= portrait_size.y;
-                    part.scale /= portrait_size.y;
-                    normalised_character.set_character_part(&asset_type, part);
-                }
-            }
-        }
-
-        let token_size = self.token_rect.size();
-        if token_size.x > 0.0
-            && token_size.y > 0.0
-            && let Some(mut part) = normalised_character.get_character_part(&AssetType::Token)
-        {
-            part.position.x /= token_size.x;
-            part.position.y /= token_size.y;
-            part.scale /= token_size.y;
-            normalised_character.set_character_part(&AssetType::Token, part);
-        }
-
+        normalised_character.normalise(point_size(self.portrait_rect), point_size(self.token_rect));
         normalised_character
     }
 
@@ -658,20 +826,18 @@ impl FECharacterCreator {
         );
         let available_size = ui.available_size_before_wrap();
 
-        let fit_result = find_max_square_side(
-            available_size.x,
-            available_size.y,
-            grid_spacing.x,
-            grid_spacing.y,
-        );
+        let (pw, ph) = self.export_size_selection.portrait();
+        let (tw, th) = self.export_size_selection.token();
+        let aspect_p = pw as f32 / ph.max(1) as f32;
+        let aspect_t = tw as f32 / th.max(1) as f32;
 
-        let canvas_size = Vec2::splat(fit_result.max_side);
+        let fit_result = find_max_canvas_sizes(available_size, grid_spacing, aspect_p, aspect_t);
 
         egui::Grid::new("canvas_grid").show(ui, |ui| {
             let _portrait_rect = egui::Frame::canvas(ui.style())
                 .inner_margin(0.0)
                 .show(ui, |ui| {
-                    self.paint_canvas(ctx, ui, CanvasType::Portrait, canvas_size)
+                    self.paint_canvas(ctx, ui, CanvasType::Portrait, fit_result.portrait_size)
                 })
                 .inner;
 
@@ -682,7 +848,7 @@ impl FECharacterCreator {
             let token_rect = egui::Frame::canvas(ui.style())
                 .inner_margin(0.0)
                 .show(ui, |ui| {
-                    self.paint_canvas(ctx, ui, CanvasType::Token, canvas_size)
+                    self.paint_canvas(ctx, ui, CanvasType::Token, fit_result.token_size)
                 })
                 .inner;
 
@@ -691,52 +857,31 @@ impl FECharacterCreator {
         });
 
         if self.is_character_normalised && self.portrait_rect.width() > 0.0 {
-            let portrait_size = self.portrait_rect.size();
-            if portrait_size.x > 0.0 && portrait_size.y > 0.0 {
-                let portrait_parts = [
-                    AssetType::Armour,
-                    AssetType::Face,
-                    AssetType::Hair,
-                    AssetType::HairBack,
-                    AssetType::Accessory,
-                ];
-                for asset_type in portrait_parts {
-                    if let Some(mut part) = self.character.get_character_part(&asset_type) {
-                        part.position.x *= portrait_size.x;
-                        part.position.y *= portrait_size.y;
-                        part.scale *= portrait_size.y;
-                        self.character.set_character_part(&asset_type, part);
-                    }
-                }
-            }
-
-            let token_size = self.token_rect.size();
-            if token_size.x > 0.0
-                && token_size.y > 0.0
-                && let Some(mut part) = self.character.get_character_part(&AssetType::Token)
-            {
-                part.position.x *= token_size.x;
-                part.position.y *= token_size.y;
-                part.scale *= token_size.y;
-                self.character.set_character_part(&AssetType::Token, part);
-            }
+            self.character
+                .denormalise(point_size(self.portrait_rect), point_size(self.token_rect));
             self.is_character_normalised = false;
             old_portrait_rect = self.portrait_rect;
             old_token_rect = self.token_rect;
         }
 
-        if old_portrait_rect.width() > 0.0
-            && (old_portrait_rect.width() - self.portrait_rect.width()).abs() > 1.0
-        {
-            let scale_factor = self.portrait_rect.width() / old_portrait_rect.width();
-            self.scale_character_parts(scale_factor, false);
+        self.rescale_for_canvas(old_portrait_rect, self.portrait_rect, false);
+        self.rescale_for_canvas(old_token_rect, self.token_rect, true);
+    }
+
+    /// Carries the parts over to a canvas that has changed size.
+    fn rescale_for_canvas(&mut self, old_rect: Rect, new_rect: Rect, is_token: bool) {
+        let resized = (old_rect.width() - new_rect.width()).abs() > 1.0
+            || (old_rect.height() - new_rect.height()).abs() > 1.0;
+        if old_rect.width() <= 0.0 || !resized {
+            return;
         }
-        if old_token_rect.width() > 0.0
-            && (old_token_rect.width() - self.token_rect.width()).abs() > 1.0
-        {
-            let scale_factor = self.token_rect.width() / old_token_rect.width();
-            self.scale_character_parts(scale_factor, true);
-        }
+        let centre = |rect: Rect| Point::new(rect.width() / 2.0, rect.height() / 2.0);
+        self.scale_character_parts(
+            centre(old_rect),
+            centre(new_rect),
+            canvas_scale_factor(old_rect.size(), new_rect.size()),
+            is_token,
+        );
     }
 
     fn paint_canvas(
@@ -749,10 +894,15 @@ impl FECharacterCreator {
         let (response, painter) = ui.allocate_painter(canvas_size, egui::Sense::click_and_drag());
         let available_rect = response.rect;
 
-        let side = available_rect.width().min(available_rect.height());
-        let canvas_rect = Rect::from_center_size(available_rect.center(), Vec2::splat(side));
+        let canvas_rect = Rect::from_center_size(available_rect.center(), canvas_size);
 
         painter.rect_filled(canvas_rect, 0.0, ui.style().visuals.extreme_bg_color);
+        painter.rect_stroke(
+            canvas_rect,
+            0.0,
+            ui.style().visuals.widgets.noninteractive.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
 
         let parts_to_draw = if canvas_type == CanvasType::Token {
             vec![AssetType::Token]
@@ -768,11 +918,14 @@ impl FECharacterCreator {
 
         self.handle_multi_touch(ctx);
 
+        let canvas_painter = painter.with_clip_rect(canvas_rect);
+
         for &part_type in &parts_to_draw {
             if let Some(part) = self.character.get_character_part(&part_type)
                 && let Some(texture) = self.get_or_load_texture(ctx, &part.asset)
             {
-                let rect = Self::paint_transformed_part(&painter, &part, &texture, canvas_rect);
+                let rect =
+                    Self::paint_transformed_part(&canvas_painter, &part, &texture, canvas_rect);
 
                 if self.selected_part == Some(part_type) && part_type != AssetType::HairBack {
                     self.draw_interaction_handles(ui, rect, &part, response.rect, ctx);
@@ -879,7 +1032,7 @@ impl FECharacterCreator {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl FECharacterCreator {
-    fn save_image(image: &image::RgbaImage, filename_stem: String) {
+    fn save_image(image: &RgbaImage, filename_stem: String) {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("PNG Image", &["png"])
             .set_file_name(&filename_stem)
@@ -916,9 +1069,19 @@ impl FECharacterCreator {
             .add_filter("FECC Character", &["fecc"])
             .pick_file()
         {
-            let result = std::fs::read_to_string(path)
+            let file_stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_owned());
+            let result = std::fs::read_to_string(&path)
                 .map_err(|e| e.to_string())
-                .and_then(|json| serde_json::from_str(&json).map_err(|e| e.to_string()));
+                .and_then(|content| {
+                    fecc_core::file_io::parse_character_save(
+                        &content,
+                        file_stem.as_deref(),
+                        &self.asset_libraries,
+                    )
+                });
 
             sender
                 .unbounded_send(result)
@@ -938,7 +1101,7 @@ impl FECharacterCreator {
             return;
         }
 
-        let filename = format!("{}.png", filename_stem);
+        let filename = format!("{filename_stem}.png");
 
         if let Err(e) = fecc_core::file_io::trigger_download(&bytes, &filename) {
             log::error!("Failed to trigger download: {e}");
@@ -949,7 +1112,7 @@ impl FECharacterCreator {
         let normalised_character = self.get_normalised_character();
         match serde_json::to_string_pretty(&normalised_character) {
             Ok(json) => {
-                let filename = format!("{}.fecc", filename_stem);
+                let filename = format!("{filename_stem}.fecc");
                 if let Err(e) = fecc_core::file_io::trigger_download(json.as_bytes(), &filename) {
                     log::error!("Failed to trigger download: {e}");
                 }
@@ -962,36 +1125,199 @@ impl FECharacterCreator {
 
     fn load_fecc(&self) {
         let sender = self.loaded_character_sender.clone();
+        let asset_libraries = self.asset_libraries.clone();
         wasm_bindgen_futures::spawn_local(async move {
             if let Some(file) = rfd::AsyncFileDialog::new()
                 .add_filter("FECC Character", &["fecc"])
                 .pick_file()
                 .await
             {
+                let file_name = file.file_name();
+                let file_stem = std::path::Path::new(&file_name)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_owned());
                 let bytes = file.read().await;
-                let result = serde_json::from_slice(&bytes).map_err(|e| e.to_string());
-                sender.unbounded_send(result).unwrap();
+                let result = String::from_utf8(bytes)
+                    .map_err(|e| format!("Failed to read file as UTF-8: {e}"))
+                    .and_then(|content| {
+                        fecc_core::file_io::parse_character_save(
+                            &content,
+                            file_stem.as_deref(),
+                            &asset_libraries,
+                        )
+                    });
+                if sender.unbounded_send(result).is_err() {
+                    log::warn!("Character receiver dropped before the loaded save was sent");
+                }
             }
         });
     }
 }
 
-fn find_max_square_side(x: f32, y: f32, padding_x: f32, padding_y: f32) -> FitResult {
-    let s_h = ((x - padding_x) / 2.0).min(y);
-    let s_v = x.min((y - padding_y) / 2.0);
+/// Waits for the browser's next turn, giving it a chance to draw a frame.
+///
+/// Uses a `MessageChannel` message rather than `setTimeout(0)`, which browsers delay by at least
+/// 4 ms once repeated.
+#[cfg(target_arch = "wasm32")]
+async fn yield_to_browser() {
+    #[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
+export function next_turn() {
+    return new Promise((resolve) => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = () => resolve();
+        channel.port2.postMessage(null);
+    });
+}"#)]
+    extern "C" {
+        fn next_turn() -> js_sys::Promise;
+    }
 
-    let s_h = s_h.max(0.0);
-    let s_v = s_v.max(0.0);
+    if let Err(error) = wasm_bindgen_futures::JsFuture::from(next_turn()).await {
+        log::warn!("Failed to yield to the browser: {error:?}");
+    }
+}
 
-    if s_h >= s_v {
+fn find_max_canvas_sizes(
+    available_space: Vec2,
+    padding: Vec2,
+    aspect_portrait: f32,
+    aspect_token: f32,
+) -> FitResult {
+    let aspect_p = aspect_portrait.max(0.01);
+    let aspect_t = aspect_token.max(0.01);
+
+    // Horizontal - matching heights
+    let h_horiz = ((available_space.x - padding.x).max(0.0) / (aspect_p + aspect_t))
+        .min(available_space.y)
+        .max(10.0);
+    let p_size_h = vec2(h_horiz * aspect_p, h_horiz);
+    let t_size_h = vec2(h_horiz * aspect_t, h_horiz);
+    let area_h = p_size_h.x * p_size_h.y + t_size_h.x * t_size_h.y;
+
+    // Vertical - matching widths
+    let w_vert = available_space
+        .x
+        .min((available_space.y - padding.y).max(0.0) / ((1.0 / aspect_p) + (1.0 / aspect_t)))
+        .max(10.0);
+    let p_size_v = vec2(w_vert, w_vert / aspect_p);
+    let t_size_v = vec2(w_vert, w_vert / aspect_t);
+    let area_v = p_size_v.x * p_size_v.y + t_size_v.x * t_size_v.y;
+
+    if area_h >= area_v {
         FitResult {
-            max_side: s_h,
+            portrait_size: p_size_h,
+            token_size: t_size_h,
             orientation: Orientation::Horizontal,
         }
     } else {
         FitResult {
-            max_side: s_v,
+            portrait_size: p_size_v,
+            token_size: t_size_v,
             orientation: Orientation::Vertical,
         }
+    }
+}
+
+/// Shows clickable tags for an asset's categories and artists.
+///
+/// Returns the tags that were clicked, so they can be toggled in the filter.
+fn asset_tablets(ui: &mut Ui, asset: &Asset, filter: &AssetFilter) -> Vec<(TagKind, TagChoice)> {
+    ui.spacing_mut().button_padding = vec2(3.0, 0.0);
+    ui.spacing_mut().item_spacing.x = 3.0;
+    ui.spacing_mut().interact_size.y = 14.0;
+    ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
+
+    let mut clicked = Vec::new();
+    for (kind, tags, chosen) in [
+        (TagKind::Category, &asset.categories, &filter.categories),
+        (TagKind::Artist, &asset.contributors, &filter.contributors),
+    ] {
+        for tag in tags {
+            let choice = TagChoice::tag(tag);
+            if ui
+                .tag_label(kind, chosen.contains(&choice), tag.as_str())
+                .clicked()
+            {
+                clicked.push((kind, choice));
+            }
+        }
+    }
+    clicked
+}
+
+/// The size of a canvas rect as a `Point`.
+fn point_size(rect: Rect) -> Point {
+    Point::new(rect.width(), rect.height())
+}
+
+/// The factor that carries parts from one canvas size to another.
+///
+/// Follows the width alone, so the parts stay lined up and a change in the canvas's shape crops or
+/// extends it the same way whichever way the window constrains it.
+fn canvas_scale_factor(old_size: Vec2, new_size: Vec2) -> f32 {
+    new_size.x / old_size.x
+}
+
+/// Checks whether an asset matches the filter and the search query.
+pub(crate) fn asset_matches(filter: &AssetFilter, search_query: &str, asset: &Asset) -> bool {
+    filter.matches(asset)
+        && (search_query.is_empty() || asset.name.to_lowercase().contains(search_query))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_max_canvas_sizes_square() {
+        let avail = vec2(800.0, 300.0);
+        let padding = vec2(10.0, 10.0);
+        let res = find_max_canvas_sizes(avail, padding, 1.0, 1.0);
+
+        assert_eq!(res.orientation, Orientation::Horizontal);
+        assert!((res.portrait_size.x - 300.0).abs() < 1e-4);
+        assert!((res.portrait_size.y - 300.0).abs() < 1e-4);
+        assert!((res.token_size.x - 300.0).abs() < 1e-4);
+        assert!((res.token_size.y - 300.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_find_max_canvas_sizes_vertical() {
+        let avail = vec2(300.0, 800.0);
+        let padding = vec2(10.0, 10.0);
+        let res = find_max_canvas_sizes(avail, padding, 1.0, 1.0);
+
+        assert_eq!(res.orientation, Orientation::Vertical);
+        assert!((res.portrait_size.x - 300.0).abs() < 1e-4);
+        assert!((res.portrait_size.y - 300.0).abs() < 1e-4);
+        assert!((res.token_size.x - 300.0).abs() < 1e-4);
+        assert!((res.token_size.y - 300.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_canvas_scale_factor_ignores_window_shape() {
+        // Original (96x96) to ROMHack (96x80) keeps the art's export size, in a window that
+        // constrains the canvas by width and in one that constrains it by height.
+        let by_width = canvas_scale_factor(vec2(300.0, 300.0), vec2(300.0, 250.0));
+        let by_height = canvas_scale_factor(vec2(300.0, 300.0), vec2(360.0, 300.0));
+
+        assert!((by_width - 300.0 / 300.0).abs() < 1e-4);
+        assert!((by_height - 360.0 / 300.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_find_max_canvas_sizes_romhack_aspect_ratio() {
+        let avail = vec2(1000.0, 500.0);
+        let padding = vec2(10.0, 10.0);
+        let aspect_p = 96.0 / 80.0;
+        let aspect_t = 1.0;
+        let res = find_max_canvas_sizes(avail, padding, aspect_p, aspect_t);
+
+        let actual_aspect_p = res.portrait_size.x / res.portrait_size.y;
+        let actual_aspect_t = res.token_size.x / res.token_size.y;
+
+        assert!((actual_aspect_p - aspect_p).abs() < 1e-4);
+        assert!((actual_aspect_t - aspect_t).abs() < 1e-4);
     }
 }

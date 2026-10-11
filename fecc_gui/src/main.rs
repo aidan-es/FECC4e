@@ -9,6 +9,7 @@
 
 mod app;
 pub(crate) mod extensions;
+mod fonts;
 
 pub use app::FECharacterCreator;
 

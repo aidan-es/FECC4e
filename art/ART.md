@@ -5,7 +5,7 @@ description: A guide on how to create and add custom art assets to the FE Charac
 
 ## How to Add Art Files
 
-- If you're using a FECC4e native application, simply place the file into the 'art' directory that you'll find in the
+- If you're using a FECC4e native (Windows, Linux, macOS) application, simply place the file into the 'art' directory that you'll find in the
   archive folder next to the executable.
 - If you're using a FECC4e web application:
     - Click 'Add Art' on the menu bar.
@@ -17,14 +17,16 @@ description: A guide on how to create and add custom art assets to the FE Charac
 
 ## How to Make FECC4e Compatible Art Files.
 
-Token files must be 64x64 pixels and end with "_Token.png". All other types must be 96x96 pixels and end with '_
+Token files must be 64x64 pixels and end with "_Token.png". All other types must be 96x96 pixels and end with '
 Face.png', '_Hair.png', '_HairBack.png', '_Armour.png' or '_Accessory.png' respectively.
+
+The game a character is from can be added in [square brackets] and the artist or contributor can be added in {curly brackets}. For example a full file name may be: `Anna[FE8]{IS}_Armour.png`.
 
 The colouring system is rather esoteric, but must be followed for compatibility with all the existing artwork. RGB
 colours consist of a red, green and blue channel, only the red channel is considered by FEEC4e when reading art files.
-The values you set for green and blue are imaterial.
+The values you set for green and blue are immaterial.
 
-Differing red values are used to differeniate different parts of the art that should be coloured differently. Red values
+Differing red values are used to differentiate parts of the art that should be coloured differently. Red values
 are divided by 10 and then compared to the bellow keys (so multiply these key values by 10 to get the red values you
 should use in your art).
 
@@ -54,7 +56,7 @@ should use in your art).
 
 11 - Accessory Colour (dark)
 
-### For Armour and Hair files:
+### For Armour, Hair and Token files:
 
 0 - Outline Colour
 
@@ -98,4 +100,8 @@ should use in your art).
 
 20 - Leather Colour (dark)
 
+21 - Accessory Colour (light)
 
+22 - Accessory Colour (base)
+
+23 - Accessory Colour (dark)

@@ -4,7 +4,7 @@
 # trunk output folder
 dist
 
-# Rust compile target directories:
+# Rust compile target locations:
 target
 target_ra
 target_wasm
@@ -14,3 +14,4 @@ target_wasm
 *.iml
 
 /art/index.html
+tools/

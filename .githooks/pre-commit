@@ -1,0 +1,19 @@
+#!/bin/bash
+# Windows ignores case, so git misses renames that only change capitalisation.
+# Lists top-level art git spells differently to the disk, skipping deleted files.
+set -o pipefail
+export LC_ALL=C
+# -z stops git quoting unusual names, and subfolders aren't listed from the disk.
+tracked=$(git ls-files -z art | tr '\0' '\n' | sed '/^art\/.*\//d' | sort) || {
+    echo "pre-commit: couldn't list the art tracked by git" >&2
+    exit 1
+}
+mismatched=$(comm -23 <(printf '%s\n' "$tracked") <(ls -d art/* | sort) |
+    while IFS= read -r path; do [ -e "$path" ] && echo "$path"; done)
+
+if [ -n "$mismatched" ]; then
+    echo "Capitalisation in git differs from art/ for:"
+    echo "$mismatched"
+    echo "Record each rename with: git mv -f old new"
+    exit 1
+fi

@@ -1,4 +1,5 @@
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+use crate::asset_tags::{ParsedName, parse_name};
 use image::RgbaImage;
 use std::option::Option;
 use std::path::{Path, PathBuf};
@@ -52,36 +53,63 @@ impl AssetType {
 /// Image data is loaded on demand.
 #[derive(Clone, serde::Deserialize, serde::Serialize, Eq, PartialEq, Default, Debug)]
 pub struct Asset {
-    /// Form is `name_type`, e.g. `MyAsset_Face`.
+    /// Form is `name_type`, e.g. `Archer_Face`.
     pub id: String,
+    /// Name without tags or type, e.g. `Archer`.
     pub name: String,
     pub path: PathBuf,
     pub back_part: Option<String>,
     pub asset_type: AssetType,
+    /// Categories from the file name, e.g. the game. See [`crate::asset_tags`].
+    #[serde(skip)]
+    pub categories: Vec<String>,
+    /// Contributors from the file name. See [`crate::asset_tags`].
+    #[serde(skip)]
+    pub contributors: Vec<String>,
     #[serde(skip)]
     pub image_data: Option<Arc<RgbaImage>>,
 }
 
 impl Asset {
+    /// Creates an asset.
     pub fn new(
         name: String,
         path: PathBuf,
         back_part: Option<String>,
         asset_type: AssetType,
     ) -> Self {
-        Self {
-            id: name.clone() + "_" + &*asset_type.to_string(),
+        let parsed = parse_name(&name).unwrap_or_else(|_| ParsedName {
             name,
+            ..Default::default()
+        });
+        Self {
+            id: Self::make_id(&parsed.name, asset_type),
+            name: parsed.name,
             path,
             back_part,
             asset_type,
+            categories: parsed.categories,
+            contributors: parsed.contributors,
             image_data: None,
         }
     }
 
+    /// Builds an asset id in the form `name_type`, e.g. `Archer_Face`.
+    fn make_id(name: &str, asset_type: AssetType) -> String {
+        format!("{name}_{asset_type}")
+    }
+
+    /// Returns the id of the `HairBack` asset that pairs with a `Hair` asset called `name`.
+    ///
+    /// Other asset types have no back part.
+    fn back_part_id(name: &str, asset_type: AssetType) -> Option<String> {
+        (asset_type == AssetType::Hair).then(|| Self::make_id(name, AssetType::HairBack))
+    }
+
     /// Parses a filename to extract the asset's name and type.
     ///
-    /// Filenames are expected to be in the format `Name_Type`.
+    /// Filenames are expected to be in the format `Name_Type`. The name may include tags, which
+    /// are returned with it. See [`crate::asset_tags`].
     pub fn parse_filename(filename: &str) -> Result<(&str, AssetType), String> {
         let (name, asset_type_str) = filename
             .rsplit_once('_')
@@ -98,6 +126,7 @@ impl Asset {
                 return Err(format!("Unknown asset type in filename: {asset_type_str}"));
             }
         };
+        parse_name(name)?;
 
         Ok((name, asset_type))
     }
@@ -106,16 +135,11 @@ impl Asset {
     pub fn try_from_bytes(filename: &str, bytes: &[u8]) -> Result<Self, String> {
         let (name, asset_type) = Self::parse_filename(filename.trim_end_matches(".png"))?;
 
-        let back_part_id = if asset_type == AssetType::Hair {
-            Some(format!("{}Back.png", filename.trim_end_matches(".png")))
-        } else {
-            None
-        };
-
         // Create a virtual path for the user asset
         let path = PathBuf::from(format!("user-asset://{filename}"));
 
-        let mut asset = Self::new(name.to_owned(), path, back_part_id, asset_type);
+        let mut asset = Self::new(name.to_owned(), path, None, asset_type);
+        asset.back_part = Self::back_part_id(&asset.name, asset_type);
 
         let image = image::load_from_memory(bytes)
             .map_err(|e| e.to_string())?
@@ -138,19 +162,10 @@ impl TryFrom<&Path> for Asset {
 
         let (name, asset_type) = Self::parse_filename(filename)?;
 
-        let back_part_id = if asset_type == AssetType::Hair {
-            let hair_back_id = filename.to_owned() + "Back";
-            Some(hair_back_id)
-        } else {
-            None
-        };
+        let mut asset = Self::new(name.to_owned(), path.to_path_buf(), None, asset_type);
+        asset.back_part = Self::back_part_id(&asset.name, asset_type);
 
-        Ok(Self::new(
-            name.to_owned(),
-            path.to_path_buf(),
-            back_part_id,
-            asset_type,
-        ))
+        Ok(asset)
     }
 }
 
@@ -226,8 +241,7 @@ mod tests {
         assert!(!selectable.contains(&AssetType::HairBack));
     }
 
-    #[test]
-    fn test_try_from_bytes_success() {
+    fn png_bytes() -> Vec<u8> {
         let mut image = RgbaImage::new(1, 1);
         image.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
         let mut bytes: Vec<u8> = Vec::new();
@@ -237,9 +251,13 @@ mod tests {
                 image::ImageFormat::Png,
             )
             .unwrap();
+        bytes
+    }
 
-        let asset =
-            Asset::try_from_bytes("Test_Face.png", &bytes).expect("Failed to load from bytes");
+    #[test]
+    fn test_try_from_bytes_success() {
+        let asset = Asset::try_from_bytes("Test_Face.png", &png_bytes())
+            .expect("Failed to load from bytes");
         assert_eq!(asset.name, "Test");
         assert_eq!(asset.asset_type, AssetType::Face);
         assert!(asset.image_data.is_some());
@@ -247,21 +265,43 @@ mod tests {
 
     #[test]
     fn test_try_from_bytes_hair_back_logic() {
-        let mut image = RgbaImage::new(1, 1);
-        image.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
-        let mut bytes: Vec<u8> = Vec::new();
-        image
-            .write_to(
-                &mut std::io::Cursor::new(&mut bytes),
-                image::ImageFormat::Png,
-            )
-            .unwrap();
+        let bytes = png_bytes();
 
         let asset =
             Asset::try_from_bytes("Style_Hair.png", &bytes).expect("Failed to load from bytes");
         assert_eq!(asset.name, "Style");
         assert_eq!(asset.asset_type, AssetType::Hair);
-        assert_eq!(asset.back_part, Some("Style_HairBack.png".to_string()));
+        assert_eq!(asset.back_part, Some("Style_HairBack".to_owned()));
+
+        // The back part is looked up by id, so it must match the id an uploaded HairBack gets.
+        let hair_back =
+            Asset::try_from_bytes("Style_HairBack.png", &bytes).expect("Failed to load from bytes");
+        assert_eq!(asset.back_part, Some(hair_back.id));
+    }
+
+    #[test]
+    fn test_try_from_bytes_matches_try_from_path() {
+        let bytes = png_bytes();
+
+        for filename in [
+            "Style_Hair.png",
+            "Style_HairBack.png",
+            "Long_Style_Hair.png",
+            "Lyn[FE7]{Someone}_Hair.png",
+            "Test_Face.png",
+        ] {
+            let from_bytes =
+                Asset::try_from_bytes(filename, &bytes).expect("Failed to load from bytes");
+            let path = PathBuf::from(format!("art/{filename}"));
+            let from_path =
+                Asset::try_from(path.as_path()).expect("Failed to create asset from path");
+
+            assert_eq!(from_bytes.id, from_path.id, "id for {filename}");
+            assert_eq!(
+                from_bytes.back_part, from_path.back_part,
+                "back part for {filename}"
+            );
+        }
     }
 
     #[test]

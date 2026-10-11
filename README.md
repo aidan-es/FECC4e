@@ -6,11 +6,14 @@ A cross-platform desktop and web application for creating custom character portr
 series.
 
 This is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by
-[TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scarla by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc) - these being considered the
+[TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated
+by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and
+converted to Scala with further updates by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc) - these being considered the
 1st, 2nd, and 3rd 'versions' or 'editions' respectively. I use the word 'edition' instead, in the hope of myself
 iterating with improvements and new features in future versions.
 
-Many art assets are by [Iscaneus](https://www.deviantart.com/iscaneus). 
+Art assets are principally of the Game Boy Advance era Fire Emblem games developed by [Intelligent Systems](https://en.wikipedia.org/wiki/Intelligent_Systems), namely Fire Emblem: The Binding Blade, Fire Emblem: The Blazing Blade and Fire Emblem: The Sacred Stones; known as FE6, FE7 and FE8 respectively and originally released in Japan between 2002 and 2004.
+Many original token art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
 
 ## New Features of the 4th Edition
 
@@ -56,7 +59,7 @@ the Canvas in the centre.
 4. **Exporting**: Open the "Export" panel. From here, you can set the character's name, choose an output resolution, and save the portrait and/or token as a PNG
    image.
 5. **Saving and Loading**: Open the "Save/Load" Panel You can save your character's configuration to a `.fecc` file, which can be loaded later to
-   continue editing. (Currently incompatible with saves from the previous version, but a dedicated import is planned for V3 saves.)
+   continue editing. Backwards compatible with save files from Vale's FECCV3.
 
 ### Adding Your Own Art
 
@@ -74,20 +77,32 @@ To build and run the application locally, you will need to have the Rust program
     cargo install trunk
     ```
 
-3  **Build and run:**
--    **Native:**
-        ```bash
-        cargo run --release
-        ```
--   **Web:**
-       ```bash
-       trunk serve --open --release
-       ```
+3. **Build and run:**
+
+- **Native:**
+  ```bash
+  cargo run --release
+  ```
+- **Web (via `cargo-make` from root):**
+  ```bash
+  cargo make serve
+  ```
+- **Web (direct Trunk CLI):**
+  ```bash
+  cd fecc_gui
+  trunk serve --open --release
+  ```
 
 Automatic builds and tests can be run using the `cargo-make` crate and running:
 
 ```bash
 cargo make check
+```
+
+To enable the repository's git hook(s), which catch art renames that git misses on Windows, run:
+
+```bash
+git config core.hooksPath .githooks
 ```
 
 ### Contributing
