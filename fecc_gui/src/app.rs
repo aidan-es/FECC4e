@@ -84,6 +84,14 @@ pub struct FitResult {
     pub orientation: Orientation,
 }
 
+/// A unique colour count, with the character and canvas sizes it was counted from.
+struct ColourCount {
+    character: Character,
+    portrait_size: Vec2,
+    token_size: Vec2,
+    result: Result<(usize, bool), &'static str>,
+}
+
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct FECharacterCreator {
@@ -155,6 +163,8 @@ pub struct FECharacterCreator {
     pub interaction: Option<Interaction>,
     #[serde(skip)]
     pub content_bounds_cache: HashMap<PathBuf, Rect>,
+    #[serde(skip)]
+    colour_count: Option<ColourCount>,
 
     assets_panel_expanded: bool,
     colour_panel_expanded: bool,
@@ -247,6 +257,7 @@ impl Default for FECharacterCreator {
             selected_part: None,
             interaction: None,
             content_bounds_cache: HashMap::default(),
+            colour_count: None,
             assets_panel_expanded: true,
             colour_panel_expanded: true,
             export_panel_expanded: false,

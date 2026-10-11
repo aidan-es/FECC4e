@@ -517,34 +517,9 @@ impl eframe::App for FECharacterCreator {
 
                 ui.horizontal(|ui| {
                     ui.label("Unique Colours: ");
-                    let result = Self::analyse_combined_colours(
-                        &export_character(
-                            &self.character,
-                            &[
-                                AssetType::HairBack,
-                                AssetType::Armour,
-                                AssetType::Face,
-                                AssetType::Hair,
-                                AssetType::Accessory,
-                            ],
-                            (96, 96),
-                            fecc_core::types::Point::new(
-                                self.portrait_rect.width(),
-                                self.portrait_rect.height(),
-                            ),
-                        ),
-                        &export_character(
-                            &self.character,
-                            &[AssetType::Token],
-                            (64, 64),
-                            fecc_core::types::Point::new(
-                                self.token_rect.width(),
-                                self.token_rect.height(),
-                            ),
-                        ),
-                    );
+                    let pointer_down = ui.input(|i| i.pointer.any_down());
 
-                    match result {
+                    match self.count_unique_colours(pointer_down) {
                         Ok((colour_count, has_semi_transparency)) => {
                             let count_colour = if colour_count > 15 {
                                 Color32::RED
@@ -1060,6 +1035,49 @@ FECC4e's text uses subsets of egui's default fonts:
                         });
                 }
             });
+    }
+
+    /// Counts the colours used by the portrait and token together, and checks for semi-transparency.
+    fn count_unique_colours(&mut self, pointer_down: bool) -> Result<(usize, bool), &'static str> {
+        let portrait_size = self.portrait_rect.size();
+        let token_size = self.token_rect.size();
+
+        if let Some(count) = &self.colour_count
+            && (pointer_down
+                || (count.character == self.character
+                    && count.portrait_size == portrait_size
+                    && count.token_size == token_size))
+        {
+            return count.result;
+        }
+
+        let result = Self::analyse_combined_colours(
+            &export_character(
+                &self.character,
+                &[
+                    AssetType::HairBack,
+                    AssetType::Armour,
+                    AssetType::Face,
+                    AssetType::Hair,
+                    AssetType::Accessory,
+                ],
+                (96, 96),
+                fecc_core::types::Point::new(portrait_size.x, portrait_size.y),
+            ),
+            &export_character(
+                &self.character,
+                &[AssetType::Token],
+                (64, 64),
+                fecc_core::types::Point::new(token_size.x, token_size.y),
+            ),
+        );
+        self.colour_count = Some(super::ColourCount {
+            character: self.character.clone(),
+            portrait_size,
+            token_size,
+            result,
+        });
+        result
     }
 
     fn analyse_combined_colours(

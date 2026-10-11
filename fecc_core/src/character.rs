@@ -108,7 +108,7 @@ impl ColourPalette {
     }
 }
 
-#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct CharacterPart {
     pub position: Point,
     pub scale: f32,
@@ -132,7 +132,7 @@ impl CharacterPart {
     }
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone, Default)]
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone, PartialEq, Default)]
 #[serde(default)]
 pub struct CharacterPartColours {
     pub lighter: Rgba,
@@ -167,7 +167,7 @@ impl CharacterPartColours {
     }
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize, Default, Clone)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, Default, Clone, PartialEq)]
 #[serde(default)]
 pub struct Outlines {
     outline_colours: HashMap<AssetType, Rgba>,
@@ -211,7 +211,7 @@ impl Outlines {
     }
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Clone)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, PartialEq)]
 #[serde(default)]
 pub struct Character {
     pub name: String,
