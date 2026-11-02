@@ -1,6 +1,6 @@
 [package]
 name = "fe_character_creator"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["aidan-es"]
 edition = "2024"
 default-run = "fe_character_creator"
@@ -57,8 +57,6 @@ wasm-bindgen = { workspace = true }
 web-sys = { workspace = true }
 js-sys = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
-getrandom = { workspace = true, features = ["wasm_js"] }
-getrandom_03 = { workspace = true, features = ["wasm_js"] } #Requied to enable wasm_js for the older getrandom still used by ahash
 
 
 [build-dependencies]
