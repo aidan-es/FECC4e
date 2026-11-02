@@ -1,7 +1,7 @@
 // Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
 use egui::{
-    Atom, Button, Color32, CornerRadius, Painter, Rect, Response, Stroke, TextStyle, Ui, Vec2,
-    Visuals, WidgetText, pos2,
+    Atom, Button, Color32, CornerRadius, IdSalt, Painter, Rect, Response, Stroke, TextStyle, Ui,
+    Vec2, Visuals, WidgetText, pos2,
 };
 
 /// Represents the nature of the tag.
@@ -35,7 +35,7 @@ impl TagLabel for Ui {
             return self.tag_plain_label(kind, selected, text);
         }
         with_tag_style(self, kind, |ui| {
-            let icon_id = ui.next_auto_id().with("artist_icon");
+            let icon_id = IdSalt::new("artist_icon");
             let text_style = ui
                 .style()
                 .override_text_style

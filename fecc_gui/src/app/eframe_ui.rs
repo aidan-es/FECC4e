@@ -121,7 +121,7 @@ impl eframe::App for FECharacterCreator {
                         self.assets_panel_expanded = !self.assets_panel_expanded;
                     }
 
-                    egui::global_theme_preference_switch(ui);
+                    egui::global_theme_preference_buttons(ui);
 
                     if ui
                         .selectable_label(self.export_panel_expanded, "Export")
