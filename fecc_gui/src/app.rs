@@ -1000,34 +1000,6 @@ impl FECharacterCreator {
 
         false
     }
-
-    fn is_character_valid(&self, character: &Character) -> bool {
-        let all_part_options = [
-            character.get_character_part(&AssetType::Armour),
-            character.get_character_part(&AssetType::Face),
-            character.get_character_part(&AssetType::Hair),
-            character.get_character_part(&AssetType::HairBack),
-            character.get_character_part(&AssetType::Accessory),
-            character.get_character_part(&AssetType::Token),
-        ];
-
-        for part in all_part_options.iter().flatten() {
-            if self
-                .asset_libraries
-                .get(&part.asset.asset_type)
-                .and_then(|lib| lib.get(&part.asset.id))
-                .is_none()
-            {
-                log::error!(
-                    "Validation failed: Asset '{}' of type '{:?}' not found in libraries.",
-                    part.asset.id,
-                    part.asset.asset_type
-                );
-                return false;
-            }
-        }
-        true
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
