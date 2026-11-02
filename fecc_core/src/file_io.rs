@@ -19,13 +19,13 @@ pub async fn load_asset_libraries()
 -> Result<HashMap<AssetType, IndexMap<String, Asset>>, Box<dyn Error + Send + Sync>> {
     let mut asset_libraries = empty_asset_libraries();
 
-        let path_pattern = "art/*.png";
-        for path in glob::glob(path_pattern)
-            .expect("Failed to read glob pattern")
-            .flatten()
-        {
-            add_asset_to_library(&mut asset_libraries, &path);
-        }
+    let path_pattern = "art/*.png";
+    for path in glob::glob(path_pattern)
+        .expect("Failed to read glob pattern")
+        .flatten()
+    {
+        add_asset_to_library(&mut asset_libraries, &path);
+    }
 
     Ok(asset_libraries)
 }

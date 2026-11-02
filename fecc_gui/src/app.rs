@@ -8,9 +8,7 @@ use fecc_core::asset::{Asset, AssetType};
 use fecc_core::asset_tags::{AssetFilter, AvailableTags, TagChoice};
 use fecc_core::character::{Character, CharacterPart, ColourPalette, Colourable, Shade};
 use fecc_core::export::ExportSize;
-use fecc_core::file_io::{
-    load_colours_from_csv, load_image_bytes, preload_image_bytes,
-};
+use fecc_core::file_io::{load_colours_from_csv, load_image_bytes, preload_image_bytes};
 use fecc_core::types::Point;
 
 use ahash::{HashMap, HashSet};
@@ -393,7 +391,7 @@ impl FECharacterCreator {
         };
 
         #[cfg(target_arch = "wasm32")]
-            wasm_bindgen_futures::spawn_local(palettes_task);
+        wasm_bindgen_futures::spawn_local(palettes_task);
 
         #[cfg(not(target_arch = "wasm32"))]
         {
