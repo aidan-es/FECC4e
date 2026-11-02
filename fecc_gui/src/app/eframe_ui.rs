@@ -89,16 +89,11 @@ impl eframe::App for FECharacterCreator {
             if let Ok(result) = rx.try_recv() {
                 match result {
                     Ok(loaded_character) => {
-                        if self.is_character_valid(&loaded_character) {
-                            self.character = loaded_character;
-                            self.is_character_normalised = true;
-                            self.character_needs_asset_refresh = true;
-                            self.texture_cache.clear();
-                            self.toasts.success("Successfully loaded character.");
-                        } else {
-                            log::error!("Loaded character is invalid.");
-                            self.toasts.error("Character is invalid.");
-                        }
+                        self.character = loaded_character;
+                        self.is_character_normalised = true;
+                        self.character_needs_asset_refresh = true;
+                        self.texture_cache.clear();
+                        self.toasts.success("Successfully loaded character.");
                     }
                     Err(e) => {
                         log::error!("Failed to load character: {e}");
@@ -126,7 +121,7 @@ impl eframe::App for FECharacterCreator {
                         self.assets_panel_expanded = !self.assets_panel_expanded;
                     }
 
-                    egui::global_theme_preference_switch(ui);
+                    egui::global_theme_preference_buttons(ui);
 
                     if ui
                         .selectable_label(self.export_panel_expanded, "Export")
@@ -873,7 +868,13 @@ FECC4e's text uses subsets of egui's default fonts:
                     self.refresh_available_tags();
 
                     if self.character_needs_asset_refresh {
-                        self.character.relink_assets(&self.asset_libraries);
+                        let missing = self.character.relink_assets(&self.asset_libraries);
+                        if !missing.is_empty() {
+                            log::warn!(
+                                "Removed parts whose art isn't in the library: {}",
+                                missing.join(", ")
+                            );
+                        }
                         self.character_needs_asset_refresh = false;
 
                         // Also trigger image loading

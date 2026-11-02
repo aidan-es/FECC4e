@@ -13,7 +13,8 @@ macro_rules! subset_font {
 
 /// Returns egui's default font setup, using the subset fonts.
 ///
-/// Matches `FontDefinitions::default()` in epaint, including its tweaks and fallback order.
+/// Matches `FontDefinitions::default()` in epaint with `monochrome_emoji_fonts`, including its
+/// tweaks and fallback order. Its `egui-icons` font is left out, as `emoji-icon-font` has those icons.
 pub fn subset_font_definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::empty();
 

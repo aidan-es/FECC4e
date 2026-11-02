@@ -348,7 +348,17 @@ impl Character {
         }
     }
 
-    pub fn relink_assets(&mut self, asset_libraries: &HashMap<AssetType, IndexMap<String, Asset>>) {
+    /// Swaps each part's asset for the library's copy, following any art renamed since.
+    ///
+    /// Each part is looked up in the library from scratch, and the saved asset is never kept, as
+    /// a save file can name any path. Parts whose art isn't in that library are removed.
+    ///
+    /// Returns the ids of the removed parts.
+    pub fn relink_assets(
+        &mut self,
+        asset_libraries: &HashMap<AssetType, IndexMap<String, Asset>>,
+    ) -> Vec<String> {
+        let mut missing = Vec::new();
         for (asset_type, part) in [
             (AssetType::Armour, &mut self.armour),
             (AssetType::Face, &mut self.face),
@@ -357,14 +367,20 @@ impl Character {
             (AssetType::Accessory, &mut self.accessory),
             (AssetType::Token, &mut self.token),
         ] {
-            if let Some(part) = part
-                && let Some(asset) = asset_libraries
-                    .get(&asset_type)
-                    .and_then(|library| asset_aliases::resolve(library, &part.asset.id))
+            let Some(saved) = part.as_mut() else {
+                continue;
+            };
+            if let Some(asset) = asset_libraries
+                .get(&asset_type)
+                .and_then(|library| asset_aliases::resolve(library, &saved.asset.id))
             {
-                part.asset = asset.clone();
+                saved.asset = asset.clone();
+            } else {
+                missing.push(saved.asset.id.clone());
+                *part = None;
             }
         }
+        missing
     }
 }
 

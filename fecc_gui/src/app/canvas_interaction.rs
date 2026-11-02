@@ -96,7 +96,7 @@ impl FECharacterCreator {
 
         let painter = Painter::new(
             ctx.clone(),
-            LayerId::new(Background, Id::new(1)),
+            LayerId::new(Background, Id::unique(1)),
             canvas_rect,
         );
 
@@ -118,7 +118,8 @@ impl FECharacterCreator {
             corners_abs[1].lerp(corners_abs[2], 0.5) + rot * vec2(ROTATE_HANDLE_OFFSET, 0.0);
         let flip_rect =
             Rect::from_center_size(flip_handle_pos, vec2(1.0, 1.0) * FLIP_HANDLE_RADIUS * 2.0);
-        let flip_response = ui.interact(flip_rect, ui.id().with("flip"), egui::Sense::click());
+        let flip_response =
+            ui.interact(flip_rect, ui.scope_id().with("flip"), egui::Sense::click());
 
         let source = egui::Image::new(egui::include_image!("../../../assets/flip.png"))
             .texture_options(ICON_TEXTURE_OPTIONS);
@@ -153,7 +154,7 @@ impl FECharacterCreator {
                 Rect::from_center_size(corner_pos, vec2(1.0, 1.0) * HANDLE_RADIUS * 2.0);
             let scale_response = ui.interact(
                 scale_rect,
-                ui.id().with("scale").with(i),
+                ui.scope_id().with("scale").with(i),
                 egui::Sense::drag(),
             );
 
@@ -217,7 +218,7 @@ impl FECharacterCreator {
                 Rect::from_center_size(rotate_handle_pos, vec2(1.0, 1.0) * HANDLE_RADIUS * 2.0);
             let rotate_response = ui.interact(
                 rotate_rect,
-                ui.id().with("rotate").with(i),
+                ui.scope_id().with("rotate").with(i),
                 egui::Sense::drag(),
             );
 

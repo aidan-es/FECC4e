@@ -238,6 +238,7 @@ pub fn trigger_download(bytes: &[u8], filename: &str) -> Result<(), Box<dyn Erro
 /// a legacy V3 save file. If `file_stem` is provided and the loaded character has
 /// an empty name, `file_stem` will be used as the character's name. The parts of a
 /// FECC 4e save are relinked to the libraries, following any art renamed since it was saved.
+/// A save that uses art missing from the libraries is rejected.
 pub fn parse_character_save(
     content: &str,
     file_stem: Option<&str>,
@@ -251,7 +252,13 @@ pub fn parse_character_save(
         {
             character.name = stem.to_owned();
         }
-        character.relink_assets(asset_libraries);
+        let missing = character.relink_assets(asset_libraries);
+        if !missing.is_empty() {
+            return Err(format!(
+                "Save uses art that isn't in the library: {}",
+                missing.join(", ")
+            ));
+        }
         Ok(character)
     } else if legacy::is_legacy_save(content) {
         legacy::parse_legacy_save(content, file_stem, asset_libraries)
@@ -430,6 +437,38 @@ mod tests {
                 Some("SageCasting_Token"),
             ]
         );
+    }
+
+    #[test]
+    fn test_parse_character_save_ignores_saved_paths() {
+        // A save can name any path, such as a network share, so parts take the library's.
+        let content = include_str!("../tests/fixtures/4e_save_0-2-0.fecc").replace(
+            "art/Legualt_Face.png",
+            r"\\\\attacker.example\\share\\x.png",
+        );
+        let libraries = repository_art_libraries();
+
+        let character = parse_character_save(&content, None, &libraries).unwrap();
+
+        assert_eq!(
+            character.face.unwrap().asset.path,
+            libraries[&AssetType::Face]["Legault_Face"].path
+        );
+    }
+
+    #[test]
+    fn test_parse_character_save_rejects_art_in_another_slot() {
+        // Hair art in the face slot, which would otherwise keep its saved path.
+        let content = r#"{"face": {
+            "position": {"x": 0.5, "y": 0.5}, "scale": 0.01, "rotation": 0.0,
+            "asset": {"id": "Alen_Hair", "name": "Alen", "path": "//attacker.example/x.png",
+                      "back_part": null, "asset_type": "Hair"}
+        }}"#;
+        let libraries = repository_art_libraries();
+
+        let result = parse_character_save(content, None, &libraries);
+
+        assert!(result.is_err_and(|e| e.contains("Alen_Hair")));
     }
 
     #[test]
