@@ -1,4 +1,4 @@
-// Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+// Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 use std::cmp::PartialEq;
 mod canvas_interaction;
 mod eframe_ui;
@@ -824,9 +824,15 @@ impl FECharacterCreator {
         }
     }
 
+    /// Returns a copy of the character in the units saved in files.
+    ///
+    /// A restored or loaded character is already in those units until the first canvas layout.
     fn get_normalised_character(&self) -> Character {
         let mut normalised_character = self.character.clone();
-        normalised_character.normalise(point_size(self.portrait_rect), point_size(self.token_rect));
+        if !self.is_character_normalised {
+            normalised_character
+                .normalise(point_size(self.portrait_rect), point_size(self.token_rect));
+        }
         normalised_character
     }
 
@@ -1254,6 +1260,109 @@ pub(crate) fn asset_matches(filter: &AssetFilter, search_query: &str, asset: &As
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Holds saved values in memory.
+    #[derive(Default)]
+    struct MemoryStorage(std::collections::HashMap<String, String>);
+
+    impl eframe::Storage for MemoryStorage {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_owned(), value);
+        }
+
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
+
+        fn flush(&mut self) {}
+    }
+
+    /// Creates an app with a face at the given place and a laid out 441 point canvas.
+    fn app_with_face(x: f32, y: f32, scale: f32) -> FECharacterCreator {
+        let canvas = Rect::from_min_size(egui::pos2(209.0, 34.0), vec2(441.0, 441.0));
+        let mut app = FECharacterCreator {
+            portrait_rect: canvas,
+            token_rect: canvas,
+            ..Default::default()
+        };
+        app.character.set_character_part(
+            &AssetType::Face,
+            CharacterPart {
+                position: Point::new(x, y),
+                scale,
+                rotation: 0.0,
+                flipped: false,
+                asset: Asset::new(
+                    "Test".to_owned(),
+                    "art/Test_Face.png".into(),
+                    None,
+                    AssetType::Face,
+                ),
+            },
+        );
+        app
+    }
+
+    /// Saves the app, then returns the saved face's position and scale.
+    fn saved_face(app: &mut FECharacterCreator) -> (f32, f32, f32) {
+        let mut storage = MemoryStorage::default();
+        eframe::App::save(app, &mut storage);
+        let saved: FECharacterCreator =
+            eframe::get_value(&storage, eframe::APP_KEY).expect("Failed to read the save");
+        let face = saved
+            .character
+            .get_character_part(&AssetType::Face)
+            .expect("The save has no face");
+        (face.position.x, face.position.y, face.scale)
+    }
+
+    #[test]
+    fn test_save_before_first_layout_keeps_normalised_values() {
+        let mut app = app_with_face(0.5, 0.6, 0.0083);
+        app.is_character_normalised = true;
+
+        // A second save stays the same, as each page unload before a frame saves again.
+        for _ in 0..2 {
+            assert_eq!(saved_face(&mut app), (0.5, 0.6, 0.0083));
+        }
+        assert!(app.is_character_normalised);
+    }
+
+    #[test]
+    fn test_save_after_layout_normalises_once() {
+        let mut app = app_with_face(220.5, 264.6, 3.66);
+
+        let (x, y, scale) = saved_face(&mut app);
+
+        assert!((x - 0.5).abs() < 1e-6);
+        assert!((y - 0.6).abs() < 1e-6);
+        assert!((scale - 3.66 / 441.0).abs() < 1e-6);
+
+        // The live character stays in canvas pixels.
+        let face = app
+            .character
+            .get_character_part(&AssetType::Face)
+            .expect("The character has no face");
+        assert_eq!(face.scale, 3.66);
+    }
+
+    #[test]
+    fn test_save_file_before_first_layout_keeps_normalised_values() {
+        let mut app = app_with_face(0.5, 0.6, 0.0083);
+        app.is_character_normalised = true;
+
+        let face = app
+            .get_normalised_character()
+            .face
+            .expect("The character has no face");
+
+        assert_eq!(face.position, Point::new(0.5, 0.6));
+        assert_eq!(face.scale, 0.0083);
+    }
 
     #[test]
     fn test_find_max_canvas_sizes_square() {
