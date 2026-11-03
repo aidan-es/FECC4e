@@ -1,4 +1,4 @@
-// Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+// Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 pub mod legacy;
 
 use crate::asset::{Asset, AssetType};
@@ -224,13 +224,14 @@ pub fn trigger_download(bytes: &[u8], filename: &str) -> Result<(), Box<dyn Erro
 /// a legacy V3 save file. If `file_stem` is provided and the loaded character has
 /// an empty name, `file_stem` will be used as the character's name. The parts of a
 /// FECC 4e save are relinked to the libraries, following any art renamed since it was saved.
-/// A save that uses art missing from the libraries is rejected.
+/// A save that uses art missing from the libraries is rejected, as is one with a part that can't
+/// be drawn. Colours missing from a save take their defaults.
 pub fn parse_character_save(
     content: &str,
     file_stem: Option<&str>,
     asset_libraries: &HashMap<AssetType, IndexMap<String, Asset>>,
 ) -> Result<Character, String> {
-    if content.trim_start().starts_with('{') {
+    let mut character = if content.trim_start().starts_with('{') {
         let mut character: Character =
             serde_json::from_str(content).map_err(|e| format!("Failed to parse JSON save: {e}"))?;
         if character.name.is_empty()
@@ -245,21 +246,32 @@ pub fn parse_character_save(
                 missing.join(", ")
             ));
         }
-        Ok(character)
+        character
     } else if legacy::is_legacy_save(content) {
-        legacy::parse_legacy_save(content, file_stem, asset_libraries)
+        legacy::parse_legacy_save(content, file_stem, asset_libraries)?
     } else {
-        Err(
+        return Err(
             "Unrecognized save file format. Expected FECC 4e JSON or legacy V3 save file."
                 .to_owned(),
-        )
+        );
+    };
+
+    let unusable = character.repair();
+    if !unusable.is_empty() {
+        return Err(format!(
+            "Save has parts with an unusable position, scale or rotation: {}",
+            unusable.join(", ")
+        ));
     }
+    Ok(character)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::asset::AssetType;
+    use crate::character::Colourable;
+    use crate::recolour::recolour;
     use indexmap::IndexMap;
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -455,6 +467,51 @@ mod tests {
         let result = parse_character_save(content, None, &libraries);
 
         assert!(result.is_err_and(|e| e.contains("Alen_Hair")));
+    }
+
+    #[test]
+    fn test_parse_character_save_fills_missing_colours() {
+        // Only one colour saved, which recolouring would otherwise panic on.
+        let content =
+            r#"{"character_colours": {"Skin": {"base": {"r": 1, "g": 2, "b": 3, "a": 255}}}}"#;
+
+        let character = parse_character_save(content, None, &HashMap::new()).unwrap();
+
+        assert_eq!(character.character_colours[&Colourable::Skin].base.r, 1);
+        for asset_type in [AssetType::Face, AssetType::Armour] {
+            recolour(
+                &mut image::RgbaImage::new(1, 1),
+                asset_type,
+                &character.character_colours,
+                &character.outline_colours,
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_character_save_rejects_unusable_scale() {
+        // Too large for an f32, so this reads as infinity.
+        let content = r#"{"hair": {
+            "position": {"x": 0.5, "y": 0.5}, "scale": 1e39, "rotation": 0.0,
+            "asset": {"id": "Alen_Hair", "name": "Alen", "path": "art/Alen_Hair.png",
+                      "back_part": null, "asset_type": "Hair"}
+        }}"#;
+        let libraries = repository_art_libraries();
+
+        let result = parse_character_save(content, None, &libraries);
+
+        assert!(result.is_err_and(|e| e.contains("Alen_Hair")));
+    }
+
+    #[test]
+    fn test_parse_character_save_rejects_unusable_scale_in_v3_save() {
+        let content = "===COLOR_START===\n===COLOR_END===\n===TOOLBOX_START===\n\
+            face::>1||0||0||inf||0||000000\n===TOOLBOX_END===\n";
+        let libraries = repository_art_libraries();
+
+        let result = parse_character_save(content, None, &libraries);
+
+        assert!(result.is_err_and(|e| e.contains("unusable")));
     }
 
     #[test]

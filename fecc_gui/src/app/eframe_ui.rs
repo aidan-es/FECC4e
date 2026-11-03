@@ -1,4 +1,4 @@
-// Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+// Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 use super::{CanvasType, ICON_TEXTURE_OPTIONS, asset_matches};
 use crate::FECharacterCreator;
 use crate::extensions::color32::Contrast as _;
@@ -14,7 +14,7 @@ use fecc_core::asset::{Asset, AssetType};
 use fecc_core::asset_tags::{AvailableTags, TagChoice, category_title};
 use fecc_core::character::Colourable::Skin;
 use fecc_core::character::{CharacterPartColours, Colourable, Shade};
-use fecc_core::export::{ExportSize, export_character};
+use fecc_core::export::{ExportError, ExportSize, export_character};
 use fecc_core::random::{randomize_assets, randomize_colours};
 use fecc_core::types::Rgba;
 use image::RgbaImage;
@@ -541,8 +541,8 @@ impl eframe::App for FECharacterCreator {
                                 );
                             }
                         }
-                        Err(_) => {
-                            ui.label("Unknown");
+                        Err(e) => {
+                            ui.label("Unknown").on_hover_text(e.to_string());
                         }
                     }
                 });
@@ -654,7 +654,8 @@ impl eframe::App for FECharacterCreator {
                         self.export_size_selection.portrait().1
                     ))
                     .clicked()
-                    && let Some(image) = export_character(
+                {
+                    match export_character(
                         &self.character,
                         &[
                             AssetType::HairBack,
@@ -671,9 +672,14 @@ impl eframe::App for FECharacterCreator {
                             self.portrait_rect.width(),
                             self.portrait_rect.height(),
                         ),
-                    )
-                {
-                    Self::save_image(&image, self.character.name.clone() + "_portrait");
+                    ) {
+                        Ok(image) => {
+                            Self::save_image(&image, self.character.name.clone() + "_portrait");
+                        }
+                        Err(e) => {
+                            self.toasts.error(e.to_string());
+                        }
+                    }
                 }
 
                 if ui
@@ -683,7 +689,8 @@ impl eframe::App for FECharacterCreator {
                         self.export_size_selection.token().1
                     ))
                     .clicked()
-                    && let Some(image) = export_character(
+                {
+                    match export_character(
                         &self.character,
                         &[AssetType::Token],
                         (
@@ -694,9 +701,14 @@ impl eframe::App for FECharacterCreator {
                             self.token_rect.width(),
                             self.token_rect.height(),
                         ),
-                    )
-                {
-                    Self::save_image(&image, self.character.name.clone() + "token");
+                    ) {
+                        Ok(image) => {
+                            Self::save_image(&image, self.character.name.clone() + "token");
+                        }
+                        Err(e) => {
+                            self.toasts.error(e.to_string());
+                        }
+                    }
                 }
             },
         );
@@ -1044,7 +1056,7 @@ FECC4e's text uses subsets of egui's default fonts:
     }
 
     /// Counts the colours used by the portrait and token together, and checks for semi-transparency.
-    fn count_unique_colours(&mut self, pointer_down: bool) -> Result<(usize, bool), &'static str> {
+    fn count_unique_colours(&mut self, pointer_down: bool) -> Result<(usize, bool), ExportError> {
         let portrait_size = self.portrait_rect.size();
         let token_size = self.token_rect.size();
 
@@ -1058,7 +1070,7 @@ FECC4e's text uses subsets of egui's default fonts:
         }
 
         let result = Self::analyse_combined_colours(
-            &export_character(
+            export_character(
                 &self.character,
                 &[
                     AssetType::HairBack,
@@ -1070,7 +1082,7 @@ FECC4e's text uses subsets of egui's default fonts:
                 (96, 96),
                 fecc_core::types::Point::new(portrait_size.x, portrait_size.y),
             ),
-            &export_character(
+            export_character(
                 &self.character,
                 &[AssetType::Token],
                 (64, 64),
@@ -1087,11 +1099,11 @@ FECC4e's text uses subsets of egui's default fonts:
     }
 
     fn analyse_combined_colours(
-        img_a: &Option<RgbaImage>,
-        img_b: &Option<RgbaImage>,
-    ) -> Result<(usize, bool), &'static str> {
-        let img_a = img_a.as_ref().ok_or("Image A missing")?;
-        let img_b = img_b.as_ref().ok_or("Image B missing")?;
+        img_a: Result<RgbaImage, ExportError>,
+        img_b: Result<RgbaImage, ExportError>,
+    ) -> Result<(usize, bool), ExportError> {
+        let img_a = img_a?;
+        let img_b = img_b?;
         let mut unique_colours = HashSet::default();
         let mut has_semi_transparency = false;
 

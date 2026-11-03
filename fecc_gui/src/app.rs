@@ -7,7 +7,7 @@ use crate::extensions::tag_label::{TagKind, TagLabel as _};
 use fecc_core::asset::{Asset, AssetType};
 use fecc_core::asset_tags::{AssetFilter, AvailableTags, TagChoice};
 use fecc_core::character::{Character, CharacterPart, ColourPalette, Colourable, Shade};
-use fecc_core::export::ExportSize;
+use fecc_core::export::{ExportError, ExportSize};
 use fecc_core::file_io::{load_colours_from_csv, load_image_bytes, preload_image_bytes};
 use fecc_core::types::Point;
 
@@ -92,7 +92,7 @@ struct ColourCount {
     character: Character,
     portrait_size: Vec2,
     token_size: Vec2,
-    result: Result<(usize, bool), &'static str>,
+    result: Result<(usize, bool), ExportError>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -304,6 +304,13 @@ impl FECharacterCreator {
             if let Some(mut saved_app) = eframe::get_value::<Self>(storage, eframe::APP_KEY) {
                 saved_app.is_character_normalised = true;
                 saved_app.character_needs_asset_refresh = true;
+                let unusable = saved_app.character.repair();
+                if !unusable.is_empty() {
+                    log::warn!(
+                        "Removed parts with an unusable position, scale or rotation: {}",
+                        unusable.join(", ")
+                    );
+                }
                 saved_app
             } else {
                 Default::default()
