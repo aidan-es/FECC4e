@@ -1,0 +1,9 @@
+{
+  "name": "fecc",
+  "compatibility_date": "2026-11-01",
+  "preview_urls": true,
+  "assets": {
+    "directory": "fecc_gui/dist",
+    "not_found_handling": "404-page"
+  }
+}

@@ -33,6 +33,8 @@ serde_json = { workspace = true }
 egui-notify = { workspace = true }
 egui_commonmark = { workspace = true }
 pulldown-cmark = { workspace = true } # For building HTML pages
+base64 = { workspace = true } # For building the _headers file
+sha2 = { workspace = true } # For building the _headers file
 itertools = { workspace = true }
 ahash = { workspace = true }
 

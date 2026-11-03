@@ -1,12 +1,13 @@
-name: Deploy to Firebase Hosting on PR
-on: pull_request
+name: Deploy to Cloudflare on release
+on:
+  release:
+    types: [ published ] # Runs when you click "Publish Release" in GitHub UI
+  workflow_dispatch: # Runs when you click "Run workflow" in GitHub UI
 permissions:
-  checks: write
   contents: read
-  pull-requests: write
+
 jobs:
-  build_and_preview:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+  build_and_deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -25,9 +26,10 @@ jobs:
         working-directory: fecc_gui
         run: trunk build --release
 
-      - name: Deploy to Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v4
         with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FECHARACTERCREATOR }}
-          projectId: fecharactercreator
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.156.2"
+          command: deploy

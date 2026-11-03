@@ -8,3 +8,8 @@ watch = ["style.css", "../art/ART.md"]
 stage = "pre_build"
 command = "cargo"
 command_arguments = ["run", "--bin", "build_html"]
+
+[[hooks]]
+stage = "post_build"
+command = "cargo"
+command_arguments = ["run", "--bin", "build_headers"]
