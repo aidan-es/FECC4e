@@ -35,6 +35,12 @@ use tokio::runtime::Runtime;
 /// How many images the background preload fetches at once.
 const PRELOAD_BATCH_SIZE: usize = 16;
 
+/// How long to wait before fetching an image again after its first failure, in seconds.
+const FIRST_IMAGE_RETRY_DELAY: f64 = 2.0;
+
+/// The longest wait between attempts to fetch an image, in seconds.
+const MAX_IMAGE_RETRY_DELAY: f64 = 30.0;
+
 /// How many characters fit on a line of a toast, even on a phone.
 const TOAST_LINE_LENGTH: usize = 48;
 
@@ -51,6 +57,45 @@ pub(crate) const ICON_TEXTURE_OPTIONS: egui::TextureOptions =
 #[cfg(target_arch = "wasm32")]
 mod art_files {
     include!(concat!(env!("OUT_DIR"), "/art_files.rs"));
+}
+
+/// When an image that failed to load may be fetched again.
+struct ImageRetry {
+    delay: f64,
+    retry_at: f64,
+}
+
+/// Tracks images that failed to load, so they are fetched again but not on every frame.
+///
+/// Waits longer after each failure and never gives up, so art comes back after a lost connection.
+#[derive(Default)]
+struct ImageRetries(HashMap<String, ImageRetry>);
+
+impl ImageRetries {
+    /// Records a failure, with the time in seconds. Returns whether it's the first in a row.
+    fn record_failure(&mut self, id: &str, now: f64) -> bool {
+        let delay = self.0.get(id).map_or(FIRST_IMAGE_RETRY_DELAY, |retry| {
+            (retry.delay * 2.0).min(MAX_IMAGE_RETRY_DELAY)
+        });
+        let retry = ImageRetry {
+            delay,
+            retry_at: now + delay,
+        };
+        self.0.insert(id.to_owned(), retry).is_none()
+    }
+
+    /// Returns how many seconds are left to wait, if any.
+    fn wait(&self, id: &str, now: f64) -> Option<f64> {
+        self.0
+            .get(id)
+            .map(|retry| retry.retry_at - now)
+            .filter(|wait| *wait > 0.0)
+    }
+
+    /// Forgets an image's failures, once it has loaded.
+    fn clear(&mut self, id: &str) {
+        self.0.remove(id);
+    }
 }
 
 type ImageReceiver = Option<mpsc::UnboundedReceiver<(String, Result<Arc<RgbaImage>, String>)>>;
@@ -153,6 +198,8 @@ pub struct FECharacterCreator {
     image_sender: ImageSender,
     #[serde(skip)]
     images_in_flight: HashSet<String>,
+    #[serde(skip)]
+    image_retries: ImageRetries,
     /// Loads for what the user is looking at, which the preload waits behind
     #[serde(skip)]
     visible_loads: HashSet<String>,
@@ -257,6 +304,7 @@ impl Default for FECharacterCreator {
             image_receiver: None,
             image_sender: mpsc::unbounded().0,
             images_in_flight: Default::default(),
+            image_retries: Default::default(),
             visible_loads: Default::default(),
             preload_queue: Default::default(),
             preload_in_flight: Default::default(),
@@ -433,6 +481,12 @@ impl FECharacterCreator {
             }
 
             if !self.images_in_flight.contains(&asset.id) {
+                let now = ctx.input(|input| input.time);
+                if let Some(wait) = self.image_retries.wait(&asset.id, now) {
+                    ctx.request_repaint_after_secs(wait as f32);
+                    return None;
+                }
+
                 self.images_in_flight.insert(asset.id.clone());
                 self.visible_loads.insert(asset.id.clone());
                 self.spawn_image_loads(ctx, vec![(asset.id.clone(), asset.path.clone())], false);
@@ -1287,6 +1341,53 @@ pub(crate) fn asset_matches(filter: &AssetFilter, search_query: &str, asset: &As
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_retries_wait_longer_after_each_failure_up_to_the_limit() {
+        let mut retries = ImageRetries::default();
+        assert_eq!(retries.wait("a", 0.0), None, "Nothing has failed yet");
+
+        assert!(
+            retries.record_failure("a", 100.0),
+            "This is the first failure"
+        );
+        assert_eq!(retries.wait("a", 100.0), Some(FIRST_IMAGE_RETRY_DELAY));
+        assert_eq!(
+            retries.wait("b", 100.0),
+            None,
+            "Other images are unaffected"
+        );
+
+        assert!(
+            !retries.record_failure("a", 200.0),
+            "This is a repeat failure"
+        );
+        assert_eq!(
+            retries.wait("a", 200.0),
+            Some(FIRST_IMAGE_RETRY_DELAY * 2.0)
+        );
+
+        for _ in 0..20 {
+            retries.record_failure("a", 300.0);
+        }
+        assert_eq!(retries.wait("a", 300.0), Some(MAX_IMAGE_RETRY_DELAY));
+    }
+
+    #[test]
+    fn image_retries_allow_a_fetch_once_due_and_start_over_after_a_success() {
+        let mut retries = ImageRetries::default();
+        retries.record_failure("a", 0.0);
+        retries.record_failure("a", 0.0);
+        assert_eq!(retries.wait("a", FIRST_IMAGE_RETRY_DELAY * 2.0), None);
+
+        retries.clear("a");
+        assert_eq!(retries.wait("a", 0.0), None);
+        assert!(
+            retries.record_failure("a", 0.0),
+            "The count should start over"
+        );
+        assert_eq!(retries.wait("a", 0.0), Some(FIRST_IMAGE_RETRY_DELAY));
+    }
 
     #[test]
     fn wrap_toast_text_breaks_long_text_between_words() {

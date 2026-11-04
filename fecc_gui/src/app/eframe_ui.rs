@@ -36,7 +36,7 @@ impl eframe::App for FECharacterCreator {
         // Receive background loads every frame, regardless of which panels are open
         self.update_stored_colour_palettes();
         self.update_stored_asset_libraries(&ctx);
-        self.update_stored_image_data_cache();
+        self.update_stored_image_data_cache(&ctx);
         {
             let mut character = self.character.clone();
             let asset_libraries = &self.asset_libraries;
@@ -922,7 +922,8 @@ FECC4e's text uses subsets of egui's default fonts:
         }
     }
 
-    fn update_stored_image_data_cache(&mut self) {
+    fn update_stored_image_data_cache(&mut self, ctx: &Context) {
+        let now = ctx.input(|input| input.time);
         if let Some(rx) = self.image_receiver.as_mut() {
             while let Ok((id, result)) = rx.try_recv() {
                 self.visible_loads.remove(&id);
@@ -941,6 +942,7 @@ FECC4e's text uses subsets of egui's default fonts:
                                 {
                                     asset.image_data = Some(image_data);
                                     self.images_in_flight.remove(&id);
+                                    self.image_retries.clear(&id);
                                 } else {
                                     // Stays in flight so it isn't fetched again every frame
                                     log::warn!("Received image for unknown asset: {id}");
@@ -950,7 +952,11 @@ FECC4e's text uses subsets of egui's default fonts:
                         }
                     }
                     Err(e) => {
-                        log::error!("Failed to load image {id}: {e}");
+                        self.images_in_flight.remove(&id);
+                        // Only the first, as an unreachable image keeps failing
+                        if self.image_retries.record_failure(&id, now) {
+                            log::error!("Failed to load image {id}: {e}");
+                        }
                     }
                 }
             }
