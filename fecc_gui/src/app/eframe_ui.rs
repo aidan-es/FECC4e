@@ -703,7 +703,7 @@ impl eframe::App for FECharacterCreator {
                         ),
                     ) {
                         Ok(image) => {
-                            Self::save_image(&image, self.character.name.clone() + "token");
+                            Self::save_image(&image, self.character.name.clone() + "_token");
                         }
                         Err(e) => {
                             self.toasts.error(e.to_string());
