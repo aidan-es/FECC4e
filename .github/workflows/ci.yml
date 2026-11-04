@@ -36,6 +36,10 @@ jobs:
         with:
           key: "cargo-make-checks"
 
+      - name: Check Cargo.lock is up to date
+        # Cargo make's steps would quietly update it, but native.yml builds with --locked
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
       - name: Run Cargo Make Check
         # This runs: fmt, clippy, typos, tests, build-trunk
         run: cargo make check
