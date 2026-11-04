@@ -4,6 +4,7 @@ members = [
     "fecc_core",
     "fecc_gui",
     "fecc_cli",
+    "fecc_web_tools",
 ]
 
 [profile.release]
@@ -15,6 +16,7 @@ panic = "abort"
 # Optimise all dependencies even in debug builds:
 [profile.dev.package."*"]
 opt-level = 2
+debug = "line-tables-only" # Backtraces keep file and line, with much faster, smaller builds
 
 [workspace.dependencies]
 csv = "1.4.0"

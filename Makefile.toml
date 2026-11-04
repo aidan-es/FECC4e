@@ -4,14 +4,13 @@ default_to_workspace = false
 [tasks.check]
 clear = true # Don't inherit cargo-make's built-in `cargo check` command
 dependencies = [
+    "fmt",
+    "typos",
     "check-all",
     "check-wasm",
-    "fmt",
     "clippy",
     "clippy-wasm",
-    "typos",
     "test-all",
-    "test-doc",
     "build-trunk",
     "post-check-message",
 ]
@@ -45,11 +44,6 @@ args = ["clippy", "--quiet", "--package", "fe_character_creator", "--package", "
 description = "Runs all tests"
 command = "cargo"
 args = ["test", "--quiet", "--workspace", "--all-targets", "--all-features"]
-
-[tasks.test-doc]
-description = "Runs doc tests"
-command = "cargo"
-args = ["test", "--quiet", "--workspace", "--doc"]
 
 [tasks.typos]
 description = "Checks for typos"

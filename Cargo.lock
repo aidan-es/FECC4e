@@ -1338,7 +1338,6 @@ name = "fe_character_creator"
 version = "0.3.1"
 dependencies = [
  "ahash",
- "base64",
  "chrono",
  "dirs-next",
  "eframe",
@@ -1357,13 +1356,11 @@ dependencies = [
  "js-sys",
  "log",
  "proc-macro2",
- "pulldown-cmark",
  "read-fonts 0.46.0",
  "rfd",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
- "sha2",
  "skera",
  "strum",
  "strum_macros",
@@ -1414,6 +1411,15 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "fecc_web_tools"
+version = "0.3.1"
+dependencies = [
+ "base64",
+ "pulldown-cmark",
+ "sha2",
 ]
 
 [[package]]
