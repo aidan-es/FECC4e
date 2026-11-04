@@ -74,11 +74,10 @@ impl eframe::App for FECharacterCreator {
                             .or_default()
                             .insert(asset.id.clone(), asset);
                         self.refresh_available_tags();
-                        self.add_art_error = None;
                         self.toasts.success("Successfully added art.");
                     }
                     Err(e) => {
-                        self.add_art_error = Some(e);
+                        self.report_failure("Failed to add art", e);
                     }
                 }
             }
@@ -96,8 +95,7 @@ impl eframe::App for FECharacterCreator {
                         self.toasts.success("Successfully loaded character.");
                     }
                     Err(e) => {
-                        log::error!("Failed to load character: {e}");
-                        self.toasts.error("Failed to load character.");
+                        self.report_failure("Failed to load character", e);
                     }
                 }
             }
@@ -674,10 +672,14 @@ impl eframe::App for FECharacterCreator {
                         ),
                     ) {
                         Ok(image) => {
-                            Self::save_image(&image, self.character.name.clone() + "_portrait");
+                            if let Err(e) =
+                                Self::save_image(&image, self.character.name.clone() + "_portrait")
+                            {
+                                self.report_failure("Failed to save portrait", e);
+                            }
                         }
                         Err(e) => {
-                            self.toasts.error(e.to_string());
+                            self.report_failure("Failed to export portrait", e);
                         }
                     }
                 }
@@ -703,10 +705,14 @@ impl eframe::App for FECharacterCreator {
                         ),
                     ) {
                         Ok(image) => {
-                            Self::save_image(&image, self.character.name.clone() + "_token");
+                            if let Err(e) =
+                                Self::save_image(&image, self.character.name.clone() + "_token")
+                            {
+                                self.report_failure("Failed to save token", e);
+                            }
                         }
                         Err(e) => {
-                            self.toasts.error(e.to_string());
+                            self.report_failure("Failed to export token", e);
                         }
                     }
                 }
@@ -727,8 +733,10 @@ impl eframe::App for FECharacterCreator {
 
                 ui.separator();
 
-                if ui.button("Save FECC").clicked() {
-                    self.save_fecc(self.character.name.clone());
+                if ui.button("Save FECC").clicked()
+                    && let Err(e) = self.save_fecc(self.character.name.clone())
+                {
+                    self.report_failure("Failed to save character", e);
                 }
 
                 if ui.button("Load FECC").clicked() {
@@ -748,10 +756,6 @@ impl eframe::App for FECharacterCreator {
         self.new_active_tab = false;
         self.randomise_used = false;
         self.toasts.show(&ctx);
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.add_art_error = None;
-        }
     }
 
     /// Saves the application state to persistent storage.
@@ -782,7 +786,6 @@ impl FECharacterCreator {
 
                 if ui.button("Upload File...").clicked() {
                     let sender = self.new_user_asset_sender.clone();
-                    self.add_art_error = None; // Clear previous errors
                     wasm_bindgen_futures::spawn_local(async move {
                         if let Some(file) = rfd::AsyncFileDialog::new().pick_file().await {
                             let file_name = file.file_name();
@@ -793,11 +796,6 @@ impl FECharacterCreator {
                             }
                         }
                     });
-                }
-
-                if let Some(error) = &self.add_art_error {
-                    log::error!("Failed to add art: {error}");
-                    self.toasts.error("Failed to add art.");
                 }
             });
     }

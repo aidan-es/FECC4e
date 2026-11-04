@@ -10,6 +10,8 @@ use js_sys;
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast as _;
 
 /// Asynchronously loads all character assets from the local `art` directory into libraries.
 ///
@@ -213,8 +215,10 @@ fn parse_colours<R: std::io::Read>(
 /// Triggers a file download in the browser
 #[cfg(target_arch = "wasm32")]
 pub fn trigger_download(bytes: &[u8], filename: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
-    wasm::trigger_download(bytes, filename)
-        .map_err(|e| e.as_string().unwrap_or_else(|| "JS Error".to_string()))?;
+    wasm::trigger_download(bytes, filename).map_err(|e| {
+        e.dyn_ref::<js_sys::Error>()
+            .map_or_else(|| "JS Error".to_owned(), |e| String::from(e.message()))
+    })?;
     Ok(())
 }
 
@@ -233,7 +237,7 @@ pub fn parse_character_save(
 ) -> Result<Character, String> {
     let mut character = if content.trim_start().starts_with('{') {
         let mut character: Character =
-            serde_json::from_str(content).map_err(|e| format!("Failed to parse JSON save: {e}"))?;
+            serde_json::from_str(content).map_err(|e| format!("Invalid JSON save: {e}"))?;
         if character.name.is_empty()
             && let Some(stem) = file_stem
         {

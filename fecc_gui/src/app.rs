@@ -21,8 +21,11 @@ use image::RgbaImage;
 use indexmap::IndexMap;
 use itertools::iproduct;
 use std::collections::VecDeque;
+use std::error::Error;
+use std::fmt::Display;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use strum::IntoEnumIterator as _;
 use strum_macros::EnumIter;
 
@@ -31,6 +34,12 @@ use tokio::runtime::Runtime;
 
 /// How many images the background preload fetches at once.
 const PRELOAD_BATCH_SIZE: usize = 16;
+
+/// How many characters fit on a line of a toast, even on a phone.
+const TOAST_LINE_LENGTH: usize = 48;
+
+/// How long a failure stays on screen, as it's longer to read than the default 3.5 seconds.
+const FAILURE_TOAST_DURATION: Duration = Duration::from_secs(10);
 
 /// Texture options for the PNG icons, which are drawn smaller than their source images.
 ///
@@ -192,10 +201,6 @@ pub struct FECharacterCreator {
 
     #[serde(skip)]
     #[cfg(target_arch = "wasm32")]
-    add_art_error: Option<String>,
-
-    #[serde(skip)]
-    #[cfg(target_arch = "wasm32")]
     new_user_asset_receiver: Option<mpsc::UnboundedReceiver<Result<Asset, String>>>,
 
     #[serde(skip)]
@@ -274,9 +279,6 @@ impl Default for FECharacterCreator {
 
             #[cfg(target_arch = "wasm32")]
             add_art_window_open: false,
-
-            #[cfg(target_arch = "wasm32")]
-            add_art_error: None,
 
             #[cfg(target_arch = "wasm32")]
             new_user_asset_receiver: Some(rx),
@@ -1029,37 +1031,65 @@ impl FECharacterCreator {
     }
 }
 
+impl FECharacterCreator {
+    /// Logs a failure, and tells the user why.
+    fn report_failure(&mut self, message: &str, error: impl Display) {
+        log::error!("{message}: {error}");
+        self.toasts
+            .error(wrap_toast_text(&format!("{message}: {error}")))
+            .duration(FAILURE_TOAST_DURATION);
+    }
+}
+
+/// Breaks text into lines, as toasts don't wrap and long ones run off the screen.
+fn wrap_toast_text(text: &str) -> String {
+    let mut wrapped = String::with_capacity(text.len());
+    let mut line_length = 0;
+    for word in text.split(' ') {
+        let word_length = word.chars().count();
+        if line_length > 0 {
+            if line_length + 1 + word_length > TOAST_LINE_LENGTH {
+                wrapped.push('\n');
+                line_length = 0;
+            } else {
+                wrapped.push(' ');
+                line_length += 1;
+            }
+        }
+        wrapped.push_str(word);
+        line_length += word_length;
+    }
+    wrapped
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 impl FECharacterCreator {
-    fn save_image(image: &RgbaImage, filename_stem: String) {
+    /// Saves an image to a chosen path. Cancelling the dialog isn't a failure.
+    fn save_image(
+        image: &RgbaImage,
+        filename_stem: String,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("PNG Image", &["png"])
             .set_file_name(&filename_stem)
             .save_file()
-            && let Err(e) = image.save(path)
         {
-            log::error!("Failed to save image: {e}");
+            image.save(path)?;
         }
+        Ok(())
     }
 
-    fn save_fecc(&self, filename_stem: String) {
+    /// Saves the character to a chosen path. Cancelling the dialog isn't a failure.
+    fn save_fecc(&self, filename_stem: String) -> Result<(), Box<dyn Error + Send + Sync>> {
         let normalised_character = self.get_normalised_character();
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("FECC Character", &["fecc"])
             .set_file_name(&filename_stem)
             .save_file()
         {
-            match serde_json::to_string_pretty(&normalised_character) {
-                Ok(json) => {
-                    if let Err(e) = std::fs::write(path, json) {
-                        log::error!("Failed to save FECC file: {e}");
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to serialize character: {e}");
-                }
-            }
+            std::fs::write(path, serde_json::to_string_pretty(&normalised_character)?)?;
         }
+        Ok(())
     }
 
     fn load_fecc(&self) {
@@ -1091,35 +1121,25 @@ impl FECharacterCreator {
 
 #[cfg(target_arch = "wasm32")]
 impl FECharacterCreator {
-    fn save_image(image: &RgbaImage, filename_stem: String) {
+    /// Downloads an image as a PNG.
+    fn save_image(
+        image: &RgbaImage,
+        filename_stem: String,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         use std::io::Cursor;
 
         let mut bytes: Vec<u8> = Vec::new();
-        if let Err(e) = image.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png) {
-            log::error!("Failed to encode image as PNG: {e}");
-            return;
-        }
+        image.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)?;
 
-        let filename = format!("{filename_stem}.png");
-
-        if let Err(e) = fecc_core::file_io::trigger_download(&bytes, &filename) {
-            log::error!("Failed to trigger download: {e}");
-        }
+        fecc_core::file_io::trigger_download(&bytes, &format!("{filename_stem}.png"))
     }
 
-    fn save_fecc(&self, filename_stem: String) {
+    /// Downloads the character as a save file.
+    fn save_fecc(&self, filename_stem: String) -> Result<(), Box<dyn Error + Send + Sync>> {
         let normalised_character = self.get_normalised_character();
-        match serde_json::to_string_pretty(&normalised_character) {
-            Ok(json) => {
-                let filename = format!("{filename_stem}.fecc");
-                if let Err(e) = fecc_core::file_io::trigger_download(json.as_bytes(), &filename) {
-                    log::error!("Failed to trigger download: {e}");
-                }
-            }
-            Err(e) => {
-                log::error!("Failed to serialize character: {e}");
-            }
-        }
+        let json = serde_json::to_string_pretty(&normalised_character)?;
+
+        fecc_core::file_io::trigger_download(json.as_bytes(), &format!("{filename_stem}.fecc"))
     }
 
     fn load_fecc(&self) {
@@ -1138,7 +1158,7 @@ impl FECharacterCreator {
                     .map(|s| s.to_owned());
                 let bytes = file.read().await;
                 let result = String::from_utf8(bytes)
-                    .map_err(|e| format!("Failed to read file as UTF-8: {e}"))
+                    .map_err(|e| format!("File isn't valid UTF-8: {e}"))
                     .and_then(|content| {
                         fecc_core::file_io::parse_character_save(
                             &content,
@@ -1267,6 +1287,38 @@ pub(crate) fn asset_matches(filter: &AssetFilter, search_query: &str, asset: &As
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrap_toast_text_breaks_long_text_between_words() {
+        let text =
+            "Failed to load character: Save uses art that isn't in the library: A_Face, B_Hair";
+        let wrapped = wrap_toast_text(text);
+
+        assert_eq!(
+            wrapped.replace('\n', " "),
+            text,
+            "Only spaces should change"
+        );
+        assert!(wrapped.contains('\n'), "Long text should be broken up");
+        assert!(
+            wrapped
+                .lines()
+                .all(|line| line.chars().count() <= TOAST_LINE_LENGTH),
+            "No line should be over the limit: {wrapped}"
+        );
+    }
+
+    #[test]
+    fn wrap_toast_text_keeps_short_text_and_long_words_whole() {
+        assert_eq!(wrap_toast_text("Short text"), "Short text");
+
+        let long_word = "a".repeat(TOAST_LINE_LENGTH + 1);
+        assert_eq!(wrap_toast_text(&long_word), long_word);
+        assert_eq!(
+            wrap_toast_text(&format!("a {long_word}")),
+            format!("a\n{long_word}")
+        );
+    }
 
     /// Holds saved values in memory.
     #[derive(Default)]

@@ -27,7 +27,7 @@ pub fn decode_hex_colour(hex_str: &str) -> Result<Rgba, String> {
         return Ok(Rgba::BLACK);
     }
     let val = u32::from_str_radix(clean, 16)
-        .map_err(|e| format!("Failed to parse hex colour '{hex_str}': {e}"))?;
+        .map_err(|e| format!("Invalid hex colour '{hex_str}': {e}"))?;
     let r = ((val >> 16) & 0xFF) as u8;
     let g = ((val >> 8) & 0xFF) as u8;
     let b = (val & 0xFF) as u8;
