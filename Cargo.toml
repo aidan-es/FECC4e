@@ -7,6 +7,10 @@ members = [
     "fecc_web_tools",
 ]
 
+[workspace.package]
+version = "0.4.0"
+edition = "2024"
+
 [profile.release]
 opt-level = "s"    # Same download as "z" once compressed, but a 13% smaller wasm to compile
 lto = true         # Enable Link Time Optimization

@@ -1,7 +1,7 @@
 [package]
 name = "fecc_web_tools"
-version = "0.3.1"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 publish = false
 
 [dependencies]

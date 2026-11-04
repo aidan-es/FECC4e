@@ -1,8 +1,8 @@
 [package]
 name = "fe_character_creator"
-version = "0.3.1"
+version.workspace = true
 authors = ["aidan-es"]
-edition = "2024"
+edition.workspace = true
 default-run = "fe_character_creator"
 
 
