@@ -623,39 +623,55 @@ impl FECharacterCreator {
         self.spawn_image_loads(ctx, batch, true);
     }
 
+    /// Draws the art at the given positions in a library. Returns the art that was clicked, if any.
     fn display_assets(
         &mut self,
         ctx: &Context,
         ui: &mut Ui,
-        library: &IndexMap<String, Asset>,
-        shown_assets: &[&Asset],
+        asset_type: AssetType,
+        shown_assets: &[usize],
     ) -> Option<Asset> {
         let mut clicked_asset = None;
 
         let available_width = ui.available_width();
-        let is_token = library
-            .first()
-            .map(|(_, a)| a.asset_type == AssetType::Token)
-            .unwrap_or(false);
-        let base_size = if is_token { 64.0 } else { 96.0 };
+        let base_size = if asset_type == AssetType::Token {
+            64.0
+        } else {
+            96.0
+        };
 
         let button_size_val = (available_width / base_size).floor().max(1.0) * base_size;
         let button_size = Vec2::splat(button_size_val);
 
         let spacing = ui.spacing().item_spacing.y;
         let show_tags = self.filters_expanded
-            && library
-                .values()
-                .any(|asset| !asset.categories.is_empty() || !asset.contributors.is_empty());
+            && self
+                .asset_libraries
+                .get(&asset_type)
+                .is_some_and(|library| {
+                    library
+                        .values()
+                        .any(|asset| !asset.categories.is_empty() || !asset.contributors.is_empty())
+                });
         let label_height = if show_tags { 40.0 } else { 20.0 };
         let total_item_size = vec2(button_size.x, button_size.y + spacing + label_height);
 
         let asset_filter = self.asset_filter.clone();
         let mut tag_clicks = Vec::new();
-        for &asset in shown_assets {
+        for &index in shown_assets {
             let (rect, response) = ui.allocate_at_least(total_item_size, egui::Sense::click());
 
+            let Some((_, asset)) = self
+                .asset_libraries
+                .get(&asset_type)
+                .and_then(|library| library.get_index(index))
+            else {
+                continue;
+            };
+
             if ui.is_rect_visible(rect) {
+                // Only what's on screen is cloned, as drawing it can start a load
+                let asset = &asset.clone();
                 ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                     ui.vertical(|ui| {
                         let mut selected = false;

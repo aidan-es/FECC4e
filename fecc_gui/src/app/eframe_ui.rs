@@ -10,7 +10,9 @@ use eframe::epaint::{Color32, Stroke};
 use egui::{Button, Context, Image, RichText, Ui};
 use egui_commonmark::CommonMarkViewer;
 use egui_extras::{Column, TableBuilder};
-use fecc_core::asset::{Asset, AssetType};
+#[cfg(target_arch = "wasm32")]
+use fecc_core::asset::Asset;
+use fecc_core::asset::AssetType;
 use fecc_core::asset_tags::{AvailableTags, TagChoice, category_title};
 use fecc_core::character::Colourable::Skin;
 use fecc_core::character::{CharacterPartColours, Colourable, Shade};
@@ -245,22 +247,21 @@ impl eframe::App for FECharacterCreator {
                     ui.text_edit_singleline(&mut self.search_query);
                 });
                 let search_query_cleaned = self.search_query.to_lowercase();
-                let library = self
-                    .asset_libraries
-                    .get(&self.active_tab)
-                    .cloned()
-                    .unwrap_or_default();
-                let shown_assets: Vec<&Asset> = library
-                    .values()
-                    .filter(|asset| asset_matches(&self.asset_filter, &search_query_cleaned, asset))
+                let library = self.asset_libraries.get(&self.active_tab);
+                let library_size = library.map_or(0, |library| library.len());
+                // Positions rather than references, as drawing the art needs `self` mutably
+                let shown_assets: Vec<usize> = library
+                    .iter()
+                    .flat_map(|library| library.values())
+                    .enumerate()
+                    .filter(|(_, asset)| {
+                        asset_matches(&self.asset_filter, &search_query_cleaned, asset)
+                    })
+                    .map(|(index, _)| index)
                     .collect();
                 ui.label(
-                    RichText::new(format!(
-                        "Showing {} of {}",
-                        shown_assets.len(),
-                        library.len()
-                    ))
-                    .weak(),
+                    RichText::new(format!("Showing {} of {library_size}", shown_assets.len()))
+                        .weak(),
                 );
                 ui.separator();
 
@@ -293,11 +294,11 @@ impl eframe::App for FECharacterCreator {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let asset_type = self.active_tab;
 
-                    if let Some(asset) = self.display_assets(&ctx, ui, &library, &shown_assets) {
+                    if let Some(asset) = self.display_assets(&ctx, ui, asset_type, &shown_assets) {
                         self.select_asset(&asset, asset_type);
                     }
 
-                    if shown_assets.is_empty() && !library.is_empty() {
+                    if shown_assets.is_empty() && library_size > 0 {
                         ui.label("Nothing matches the filter and search.");
                         if ui.button("Show everything").clicked() {
                             self.asset_filter = Default::default();
