@@ -1219,7 +1219,7 @@ impl FECharacterCreator {
         Ok(())
     }
 
-    fn load_fecc(&self) {
+    fn load_fecc(&self, ctx: &Context) {
         let sender = self.loaded_character_sender.clone();
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("FECC Character", &["fecc"])
@@ -1242,6 +1242,7 @@ impl FECharacterCreator {
             sender
                 .unbounded_send(result)
                 .expect("Failed to send loaded character");
+            ctx.request_repaint();
         }
     }
 }
@@ -1278,9 +1279,10 @@ impl FECharacterCreator {
         fecc_core::file_io::trigger_download(json.as_bytes(), &format!("{filename_stem}.fecc"))
     }
 
-    fn load_fecc(&self) {
+    fn load_fecc(&self, ctx: &Context) {
         let sender = self.loaded_character_sender.clone();
         let asset_libraries = self.asset_libraries.clone();
+        let ctx = ctx.clone();
         wasm_bindgen_futures::spawn_local(async move {
             if let Some(file) = rfd::AsyncFileDialog::new()
                 .add_filter("FECC Character", &["fecc"])
@@ -1305,6 +1307,7 @@ impl FECharacterCreator {
                 if sender.unbounded_send(result).is_err() {
                     log::warn!("Character receiver dropped before the loaded save was sent");
                 }
+                ctx.request_repaint();
             }
         });
     }

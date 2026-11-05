@@ -741,7 +741,7 @@ impl eframe::App for FECharacterCreator {
                 }
 
                 if ui.button("Load FECC").clicked() {
-                    self.load_fecc();
+                    self.load_fecc(&ctx);
                 }
             },
         );
@@ -784,6 +784,7 @@ impl FECharacterCreator {
 
                 if ui.button("Upload File...").clicked() {
                     let sender = self.new_user_asset_sender.clone();
+                    let ctx = ctx.clone();
                     wasm_bindgen_futures::spawn_local(async move {
                         if let Some(file) = rfd::AsyncFileDialog::new().pick_file().await {
                             let file_name = file.file_name();
@@ -792,6 +793,7 @@ impl FECharacterCreator {
                             if sender.unbounded_send(result).is_err() {
                                 log::warn!("Asset receiver dropped before the new art was sent");
                             }
+                            ctx.request_repaint();
                         }
                     });
                 }
