@@ -103,6 +103,9 @@ impl ImageRetries {
 
 type ImageReceiver = Option<mpsc::UnboundedReceiver<(String, Result<Arc<RgbaImage>, String>)>>;
 pub(crate) type ImageSender = mpsc::UnboundedSender<(String, Result<Arc<RgbaImage>, String>)>;
+type AssetLibrariesReceiver = futures_channel::oneshot::Receiver<
+    Result<std::collections::HashMap<AssetType, IndexMap<String, Asset>>, String>,
+>;
 
 /// What the frames share with the background preload, which runs between them.
 #[derive(Default)]
@@ -287,11 +290,7 @@ pub struct FECharacterCreator {
         futures_channel::oneshot::Receiver<std::collections::HashMap<Colourable, ColourPalette>>,
     >,
     #[serde(skip)]
-    asset_libraries_receiver: Option<
-        futures_channel::oneshot::Receiver<
-            std::collections::HashMap<AssetType, IndexMap<String, Asset>>,
-        >,
-    >,
+    asset_libraries_receiver: Option<AssetLibrariesReceiver>,
     #[serde(skip)]
     image_receiver: ImageReceiver,
     #[serde(skip)]
@@ -513,9 +512,9 @@ impl FECharacterCreator {
         // The web build has its art list baked in, so its libraries need no fetch
         #[cfg(target_arch = "wasm32")]
         if assets_tx
-            .send(fecc_core::file_io::asset_libraries_from_files(
+            .send(Ok(fecc_core::file_io::asset_libraries_from_files(
                 art_files::ART_FILES,
-            ))
+            )))
             .is_err()
         {
             log::warn!("Assets receiver dropped before libraries were sent");
@@ -523,15 +522,11 @@ impl FECharacterCreator {
 
         #[cfg(not(target_arch = "wasm32"))]
         let assets_task = async move {
-            match fecc_core::file_io::load_asset_libraries().await {
-                Ok(libs) => {
-                    if assets_tx.send(libs).is_err() {
-                        log::warn!("Assets receiver dropped before libraries were sent");
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to load asset libraries: {e}");
-                }
+            let libraries = fecc_core::file_io::load_asset_libraries()
+                .await
+                .map_err(|e| e.to_string());
+            if assets_tx.send(libraries).is_err() {
+                log::warn!("Assets receiver dropped before libraries were sent");
             }
             assets_ctx.request_repaint();
         };

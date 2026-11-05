@@ -32,7 +32,6 @@ egui_extras = "0.37.0"
 fecc_core = { path = "fecc_core" }
 futures-channel = "0.3.34"
 futures-util = "0.3.34"
-glob = "0.3.4"
 image = { version = "0.25.10", default-features = false }
 imageproc = { version = "0.27.0", default-features = false }
 indexmap = "2.14.2"

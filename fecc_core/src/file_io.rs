@@ -13,33 +13,86 @@ use std::path::{Path, PathBuf};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast as _;
 
-/// Asynchronously loads all character assets from the local `art` directory into libraries.
+/// The folder the native app reads `art` and `assets` from.
+///
+/// Uses the executable's folder, as the release archives ship both beside it.
+/// Falls back to the working directory, where `cargo run` finds the repository's copies.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn resource_dir() -> &'static Path {
+    static RESOURCE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+    RESOURCE_DIR.get_or_init(|| {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            // Follow a link to the binary, such as one in `~/.local/bin`
+            .map(|exe| {
+                if exe.is_symlink() {
+                    std::fs::canonicalize(&exe).unwrap_or(exe)
+                } else {
+                    exe
+                }
+            })
+            .and_then(|exe| exe.parent().map(Path::to_path_buf))
+            .filter(|dir| dir.join("art").is_dir());
+
+        match exe_dir {
+            Some(dir) => {
+                log::info!("Loading art from {}", dir.display());
+                dir
+            }
+            None => {
+                log::info!("Loading art from the working directory");
+                PathBuf::new()
+            }
+        }
+    })
+}
+
+/// Asynchronously loads all character assets from the `art` directory into libraries.
 ///
 /// The web build has no directory to scan, so it uses [`asset_libraries_from_files`] instead.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn load_asset_libraries()
 -> Result<HashMap<AssetType, IndexMap<String, Asset>>, Box<dyn Error + Send + Sync>> {
-    let mut asset_libraries = empty_asset_libraries();
+    let art_dir = resource_dir().join("art");
+    art_libraries_in(&art_dir).map_err(|e| {
+        let shown_dir = std::path::absolute(&art_dir).unwrap_or(art_dir);
+        format!("{}: {e}", shown_dir.display()).into()
+    })
+}
 
-    let path_pattern = "art/*.png";
-    for path in glob::glob(path_pattern)
-        .expect("Failed to read glob pattern")
-        .flatten()
-    {
-        add_asset_to_library(&mut asset_libraries, &path);
+/// Builds the libraries from the PNG files in an `art` directory.
+#[cfg(any(test, not(target_arch = "wasm32")))]
+fn art_libraries_in(
+    art_dir: &Path,
+) -> std::io::Result<HashMap<AssetType, IndexMap<String, Asset>>> {
+    let mut file_names = Vec::new();
+    for entry in std::fs::read_dir(art_dir)? {
+        let path = entry?.path();
+        if path.extension().is_none_or(|extension| extension != "png") {
+            continue;
+        }
+        match path.file_name().and_then(|name| name.to_str()) {
+            Some(name) => file_names.push(name.to_owned()),
+            None => log::warn!("Skipping file {path:?}: its name isn't valid UTF-8"),
+        }
     }
+    // Sort, as the directory order varies by platform and the library order is the display order
+    file_names.sort();
 
-    Ok(asset_libraries)
+    Ok(asset_libraries_from_files(&file_names))
 }
 
 /// Builds the libraries from a list of `art` file names.
 ///
 /// The web build uses the list its build script bakes in, so it needs no fetch.
-pub fn asset_libraries_from_files(files: &[&str]) -> HashMap<AssetType, IndexMap<String, Asset>> {
+pub fn asset_libraries_from_files(
+    files: &[impl AsRef<str>],
+) -> HashMap<AssetType, IndexMap<String, Asset>> {
     let mut asset_libraries = empty_asset_libraries();
 
     for file_name in files {
-        let path = PathBuf::from(format!("art/{file_name}"));
+        let path = PathBuf::from(format!("art/{}", file_name.as_ref()));
         add_asset_to_library(&mut asset_libraries, &path);
     }
 
@@ -78,22 +131,11 @@ fn add_asset_to_library(
     }
 }
 
-/// The libraries the native app loads from the `art` directory.
+/// The libraries the native app loads from the repository's `art` directory.
 #[cfg(test)]
 pub(crate) fn repository_art_libraries() -> HashMap<AssetType, IndexMap<String, Asset>> {
-    let art_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../art");
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&art_dir)
+    art_libraries_in(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../art"))
         .expect("Failed to read the art directory")
-        .map(|entry| entry.expect("Failed to read the art directory").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "png"))
-        .collect();
-    paths.sort();
-
-    let mut asset_libraries = empty_asset_libraries();
-    for path in &paths {
-        add_asset_to_library(&mut asset_libraries, path);
-    }
-    asset_libraries
 }
 
 /// Asynchronously loads a list of colours from a CSV file.
@@ -102,7 +144,7 @@ pub(crate) fn repository_art_libraries() -> HashMap<AssetType, IndexMap<String, 
 /// On WASM, it fetches the file via a JavaScript call.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn load_colours_from_csv(path: &str) -> Result<Vec<Rgba>, Box<dyn Error + Send + Sync>> {
-    let full_path = format!("assets/csv/{path}");
+    let full_path = resource_dir().join("assets/csv").join(path);
     let content = tokio::fs::read_to_string(full_path).await?;
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
@@ -148,9 +190,11 @@ pub async fn load_colours_from_csv(path: &str) -> Result<Vec<Rgba>, Box<dyn Erro
 }
 
 /// Asynchronously loads the raw bytes of an image file.
+///
+/// Reads library paths such as `art/Lyn_Face.png` from the [`resource_dir`].
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn load_image_bytes(path: &Path) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
-    Ok(tokio::fs::read(path).await?)
+    Ok(tokio::fs::read(resource_dir().join(path)).await?)
 }
 
 /// Asynchronously loads the raw bytes of an image file for background preloading.

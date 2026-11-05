@@ -879,7 +879,8 @@ FECC4e's text uses subsets of egui's default fonts:
     fn update_stored_asset_libraries(&mut self, ctx: &Context) {
         if let Some(mut rx) = self.asset_libraries_receiver.take() {
             match rx.try_recv() {
-                Ok(Some(libs)) => {
+                Ok(Some(Err(e))) => self.report_failure("Failed to load the art library", e),
+                Ok(Some(Ok(libs))) => {
                     self.asset_libraries = libs;
                     self.refresh_available_tags();
 
