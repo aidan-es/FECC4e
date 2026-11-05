@@ -17,14 +17,17 @@ use egui_commonmark::CommonMarkCache;
 use egui_notify::{Anchor, Toasts};
 use futures_channel::mpsc;
 use futures_util::future::join_all;
+use futures_util::task::AtomicWaker;
 use image::RgbaImage;
 use indexmap::IndexMap;
 use itertools::iproduct;
-use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt::Display;
+use std::future::poll_fn;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::task::Poll;
 use std::time::Duration;
 use strum::IntoEnumIterator as _;
 use strum_macros::EnumIter;
@@ -100,6 +103,103 @@ impl ImageRetries {
 
 type ImageReceiver = Option<mpsc::UnboundedReceiver<(String, Result<Arc<RgbaImage>, String>)>>;
 pub(crate) type ImageSender = mpsc::UnboundedSender<(String, Result<Arc<RgbaImage>, String>)>;
+
+/// What the frames share with the background preload, which runs between them.
+#[derive(Default)]
+struct ImageLoads {
+    /// Images that are loaded or on their way, so none are fetched twice
+    requested: Mutex<HashSet<String>>,
+    /// Loads for what the user is looking at, which the preload waits behind
+    visible: AtomicUsize,
+    /// Wakes the preload when a visible load finishes
+    visible_finished: AtomicWaker,
+    /// Whether the user is waiting on an image that's already on its way
+    repaint_wanted: AtomicBool,
+}
+
+impl ImageLoads {
+    /// Claims an image for loading. Returns false if it's already loaded or on its way.
+    fn request(&self, id: &str) -> bool {
+        self.requested
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id.to_owned())
+    }
+
+    /// Gives up the claim on an image that failed to load, so it can be fetched again.
+    fn release(&self, id: &str) {
+        self.requested
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(id);
+    }
+
+    /// Counts a load for what the user is looking at.
+    fn start_visible(&self) {
+        self.visible.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Counts a finished visible load, and wakes the preload if it's waiting.
+    fn finish_visible(&self) {
+        self.visible.fetch_sub(1, Ordering::SeqCst);
+        self.visible_finished.wake();
+    }
+
+    /// Waits until nothing the user is looking at is loading.
+    async fn wait_for_visible(&self) {
+        poll_fn(|cx| {
+            self.visible_finished.register(cx.waker());
+            if self.visible.load(Ordering::SeqCst) == 0 {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+    }
+}
+
+/// Loads and decodes images together, then sends them to the next frame.
+///
+/// Preloads fetch at low priority, behind anything the user is waiting on. Returns false if
+/// nothing is left to receive the images.
+async fn load_images(sender: &ImageSender, images: Vec<(String, PathBuf)>, preload: bool) -> bool {
+    let results = join_all(images.into_iter().map(|(id, path)| async move {
+        // Start each fetch in its own task, as starting a batch at once blocks slow processors
+        #[cfg(target_arch = "wasm32")]
+        if preload {
+            yield_to_browser().await;
+        }
+
+        let bytes = if preload {
+            preload_image_bytes(&path).await
+        } else {
+            load_image_bytes(&path).await
+        };
+
+        // Let the browser draw first, so images that arrive together aren't all decoded
+        // in one go, which freezes the page on slow processors
+        #[cfg(target_arch = "wasm32")]
+        yield_to_browser().await;
+
+        let result = match bytes {
+            Ok(bytes) => image::load_from_memory(&bytes)
+                .map(|img| Arc::new(img.to_rgba8()))
+                .map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        (id, result)
+    }))
+    .await;
+
+    for result in results {
+        if sender.unbounded_send(result).is_err() {
+            log::warn!("Image receiver dropped before the images were sent");
+            return false;
+        }
+    }
+    true
+}
 
 #[derive(Debug, PartialEq, Clone, Copy, EnumIter, Eq, Hash)]
 pub enum Corner {
@@ -197,17 +297,9 @@ pub struct FECharacterCreator {
     #[serde(skip)]
     image_sender: ImageSender,
     #[serde(skip)]
-    images_in_flight: HashSet<String>,
+    image_loads: Arc<ImageLoads>,
     #[serde(skip)]
     image_retries: ImageRetries,
-    /// Loads for what the user is looking at, which the preload waits behind
-    #[serde(skip)]
-    visible_loads: HashSet<String>,
-    /// Art still to load in the background, so it shows instantly when first needed
-    #[serde(skip)]
-    preload_queue: VecDeque<(AssetType, String)>,
-    #[serde(skip)]
-    preload_in_flight: HashSet<String>,
 
     #[serde(skip)]
     toasts: Toasts,
@@ -303,11 +395,8 @@ impl Default for FECharacterCreator {
             asset_libraries_receiver: None,
             image_receiver: None,
             image_sender: mpsc::unbounded().0,
-            images_in_flight: Default::default(),
+            image_loads: Default::default(),
             image_retries: Default::default(),
-            visible_loads: Default::default(),
-            preload_queue: Default::default(),
-            preload_in_flight: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             tokio_runtime: Arc::new(Runtime::new().expect("Failed to create Tokio runtime")),
             selected_part: None,
@@ -480,16 +569,18 @@ impl FECharacterCreator {
                 return None;
             }
 
-            if !self.images_in_flight.contains(&asset.id) {
-                let now = ctx.input(|input| input.time);
-                if let Some(wait) = self.image_retries.wait(&asset.id, now) {
-                    ctx.request_repaint_after_secs(wait as f32);
-                    return None;
-                }
+            let now = ctx.input(|input| input.time);
+            if let Some(wait) = self.image_retries.wait(&asset.id, now) {
+                ctx.request_repaint_after_secs(wait as f32);
+                return None;
+            }
 
-                self.images_in_flight.insert(asset.id.clone());
-                self.visible_loads.insert(asset.id.clone());
-                self.spawn_image_loads(ctx, vec![(asset.id.clone(), asset.path.clone())], false);
+            if self.image_loads.request(&asset.id) {
+                self.spawn_visible_load(ctx, asset);
+            } else {
+                self.image_loads
+                    .repaint_wanted
+                    .store(true, Ordering::SeqCst);
             }
 
             return None;
@@ -529,98 +620,59 @@ impl FECharacterCreator {
         }
     }
 
-    /// Loads and decodes images in one background task, then repaints once for them all.
-    ///
-    /// Preloads fetch at low priority, behind anything the user is waiting on.
-    fn spawn_image_loads(&self, ctx: &Context, images: Vec<(String, PathBuf)>, preload: bool) {
+    /// Loads an image the user is looking at, then repaints.
+    fn spawn_visible_load(&self, ctx: &Context, asset: &Asset) {
         let sender = self.image_sender.clone();
+        let image_loads = self.image_loads.clone();
         let ctx = ctx.clone();
+        let images = vec![(asset.id.clone(), asset.path.clone())];
 
-        let task = async move {
-            let results = join_all(images.into_iter().map(|(id, path)| async move {
-                let bytes = if preload {
-                    preload_image_bytes(&path).await
-                } else {
-                    load_image_bytes(&path).await
-                };
+        self.image_loads.start_visible();
+        self.spawn_background(async move {
+            load_images(&sender, images, false).await;
+            image_loads.finish_visible();
+            ctx.request_repaint();
+        });
+    }
 
-                // Let the browser draw first, so images that arrive together aren't all decoded
-                // in one go, which freezes the page on slow processors
-                #[cfg(target_arch = "wasm32")]
-                yield_to_browser().await;
+    /// Loads all the art in the background, in asset type order, so it shows instantly when needed.
+    ///
+    /// Runs between frames, as a repaint for each batch blocks slow processors. Only repaints if
+    /// the user is waiting on an image, and once at the end to store what's left.
+    fn spawn_preload(&self, ctx: &Context) {
+        let sender = self.image_sender.clone();
+        let image_loads = self.image_loads.clone();
+        let ctx = ctx.clone();
+        let images: Vec<(String, PathBuf)> = AssetType::iter()
+            .filter_map(|asset_type| self.asset_libraries.get(&asset_type))
+            .flat_map(|library| library.values())
+            .filter(|asset| asset.image_data.is_none())
+            .map(|asset| (asset.id.clone(), asset.path.clone()))
+            .collect();
 
-                let result = match bytes {
-                    Ok(bytes) => image::load_from_memory(&bytes)
-                        .map(|img| Arc::new(img.to_rgba8()))
-                        .map_err(|e| e.to_string()),
-                    Err(e) => Err(e.to_string()),
-                };
-                (id, result)
-            }))
-            .await;
+        self.spawn_background(async move {
+            let mut images = images.into_iter();
+            loop {
+                image_loads.wait_for_visible().await;
 
-            for result in results {
-                if sender.unbounded_send(result).is_err() {
-                    log::warn!("Image receiver dropped before the images were sent");
+                let batch: Vec<_> = images
+                    .by_ref()
+                    .filter(|(id, _)| image_loads.request(id))
+                    .take(PRELOAD_BATCH_SIZE)
+                    .collect();
+                if batch.is_empty() {
+                    break;
+                }
+                if !load_images(&sender, batch, true).await {
                     return;
+                }
+
+                if image_loads.repaint_wanted.swap(false, Ordering::SeqCst) {
+                    ctx.request_repaint();
                 }
             }
             ctx.request_repaint();
-        };
-
-        #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_futures::spawn_local(task);
-
-        #[cfg(not(target_arch = "wasm32"))]
-        self.tokio_runtime.spawn(task);
-    }
-
-    /// Queues every asset for the background preload, in asset type order.
-    fn queue_preload(&mut self) {
-        self.preload_queue = AssetType::iter()
-            .filter_map(|asset_type| {
-                self.asset_libraries
-                    .get(&asset_type)
-                    .map(|library| library.keys().map(move |id| (asset_type, id.clone())))
-            })
-            .flatten()
-            .collect();
-    }
-
-    /// Starts the next preload batch, but only while nothing the user is looking at is loading.
-    ///
-    /// Each batch repaints once when done, which calls this again, so the preload runs
-    /// itself to the end without input.
-    pub(crate) fn continue_preload(&mut self, ctx: &Context) {
-        if !self.visible_loads.is_empty() || !self.preload_in_flight.is_empty() {
-            return;
-        }
-
-        let mut batch = Vec::with_capacity(PRELOAD_BATCH_SIZE);
-        while batch.len() < PRELOAD_BATCH_SIZE
-            && let Some((asset_type, id)) = self.preload_queue.pop_front()
-        {
-            if self.images_in_flight.contains(&id) {
-                continue;
-            }
-            if let Some(asset) = self
-                .asset_libraries
-                .get(&asset_type)
-                .and_then(|library| library.get(&id))
-                && asset.image_data.is_none()
-            {
-                batch.push((id, asset.path.clone()));
-            }
-        }
-
-        if batch.is_empty() {
-            return;
-        }
-        for (id, _) in &batch {
-            self.images_in_flight.insert(id.clone());
-            self.preload_in_flight.insert(id.clone());
-        }
-        self.spawn_image_loads(ctx, batch, true);
+        });
     }
 
     /// Draws the art at the given positions in a library. Returns the art that was clicked, if any.
@@ -1134,6 +1186,11 @@ fn wrap_toast_text(text: &str) -> String {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl FECharacterCreator {
+    /// Runs a task in the background.
+    fn spawn_background(&self, task: impl Future<Output = ()> + Send + 'static) {
+        self.tokio_runtime.spawn(task);
+    }
+
     /// Saves an image to a chosen path. Cancelling the dialog isn't a failure.
     fn save_image(
         image: &RgbaImage,
@@ -1191,6 +1248,15 @@ impl FECharacterCreator {
 
 #[cfg(target_arch = "wasm32")]
 impl FECharacterCreator {
+    /// Runs a task in the background.
+    #[expect(
+        clippy::unused_self,
+        reason = "Matches native, which needs its runtime"
+    )]
+    fn spawn_background(&self, task: impl Future<Output = ()> + 'static) {
+        wasm_bindgen_futures::spawn_local(task);
+    }
+
     /// Downloads an image as a PNG.
     fn save_image(
         image: &RgbaImage,
@@ -1357,6 +1423,67 @@ pub(crate) fn asset_matches(filter: &AssetFilter, search_query: &str, asset: &As
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::pin::pin;
+    use std::task::{Context as TaskContext, Wake, Waker};
+
+    #[test]
+    fn image_loads_fetch_an_image_once_unless_it_failed() {
+        let image_loads = ImageLoads::default();
+
+        assert!(image_loads.request("a"), "Nothing has claimed it yet");
+        assert!(!image_loads.request("a"), "It's already on its way");
+        assert!(image_loads.request("b"), "Other images are unaffected");
+
+        image_loads.release("a");
+        assert!(
+            image_loads.request("a"),
+            "A failed image can be fetched again"
+        );
+    }
+
+    /// Records being woken.
+    #[derive(Default)]
+    struct WokenFlag(AtomicBool);
+
+    impl Wake for WokenFlag {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn image_loads_preload_waits_for_every_visible_load_and_is_woken() {
+        let image_loads = ImageLoads::default();
+        image_loads.start_visible();
+        image_loads.start_visible();
+
+        let flag = Arc::new(WokenFlag::default());
+        let waker = Waker::from(flag.clone());
+        let mut cx = TaskContext::from_waker(&waker);
+        let mut wait = pin!(image_loads.wait_for_visible());
+
+        assert!(
+            wait.as_mut().poll(&mut cx).is_pending(),
+            "Two loads are running"
+        );
+
+        image_loads.finish_visible();
+        assert!(
+            flag.0.swap(false, Ordering::SeqCst),
+            "Each finish should wake it"
+        );
+        assert!(
+            wait.as_mut().poll(&mut cx).is_pending(),
+            "One load is running"
+        );
+
+        image_loads.finish_visible();
+        assert!(
+            flag.0.load(Ordering::SeqCst),
+            "The last finish should wake it"
+        );
+        assert!(wait.as_mut().poll(&mut cx).is_ready(), "Nothing is running");
+    }
 
     #[test]
     fn image_retries_wait_longer_after_each_failure_up_to_the_limit() {

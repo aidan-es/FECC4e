@@ -751,9 +751,6 @@ impl eframe::App for FECharacterCreator {
             self.update_rect(&ctx, ui);
         });
 
-        // After the panels, so this frame's visible loads are already queued ahead of it
-        self.continue_preload(&ctx);
-
         self.new_active_tab = false;
         self.randomise_used = false;
         self.toasts.show(&ctx);
@@ -913,7 +910,7 @@ FECC4e's text uses subsets of egui's default fonts:
                         }
                     }
 
-                    self.queue_preload();
+                    self.spawn_preload(ctx);
                 }
                 Ok(None) => {
                     self.asset_libraries_receiver = Some(rx);
@@ -927,8 +924,6 @@ FECC4e's text uses subsets of egui's default fonts:
         let now = ctx.input(|input| input.time);
         if let Some(rx) = self.image_receiver.as_mut() {
             while let Ok((id, result)) = rx.try_recv() {
-                self.visible_loads.remove(&id);
-                self.preload_in_flight.remove(&id);
                 match result {
                     Ok(image_data) => {
                         let asset_type: Result<AssetType, _> =
@@ -942,10 +937,8 @@ FECC4e's text uses subsets of egui's default fonts:
                                     .and_then(|lib| lib.get_mut(&id))
                                 {
                                     asset.image_data = Some(image_data);
-                                    self.images_in_flight.remove(&id);
                                     self.image_retries.clear(&id);
                                 } else {
-                                    // Stays in flight so it isn't fetched again every frame
                                     log::warn!("Received image for unknown asset: {id}");
                                 }
                             }
@@ -953,7 +946,7 @@ FECC4e's text uses subsets of egui's default fonts:
                         }
                     }
                     Err(e) => {
-                        self.images_in_flight.remove(&id);
+                        self.image_loads.release(&id);
                         // Only the first, as an unreachable image keeps failing
                         if self.image_retries.record_failure(&id, now) {
                             log::error!("Failed to load image {id}: {e}");
