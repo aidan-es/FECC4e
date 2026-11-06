@@ -91,6 +91,9 @@ fn headers(script_hashes: &str) -> String {
 
 /art/*.png
   Cache-Control: public, max-age=3600
+
+/art/*.gz
+  Cache-Control: public, max-age=31536000, immutable
 "
     )
 }

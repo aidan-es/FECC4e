@@ -38,7 +38,7 @@ args = ["clippy", "--quiet", "--release", "--workspace", "--all-targets", "--all
 [tasks.clippy-wasm]
 description = "Runs clippy (linter) for the WASM target, in release, as web-only code is skipped by the native run"
 command = "cargo"
-args = ["clippy", "--quiet", "--release", "--package", "fe_character_creator", "--package", "fecc_core", "--target", "wasm32-unknown-unknown", "--", "-D", "warnings", "-W", "clippy::all"]
+args = ["clippy", "--quiet", "--release", "--package", "fe_character_creator", "--package", "fecc_core", "--package", "fecc_art_bundle", "--target", "wasm32-unknown-unknown", "--", "-D", "warnings", "-W", "clippy::all"]
 
 [tasks.test-all]
 description = "Runs all tests"

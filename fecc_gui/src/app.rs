@@ -56,11 +56,6 @@ const FAILURE_TOAST_DURATION: Duration = Duration::from_secs(10);
 /// mipmaps, that keeps them sharp at 1× and 2× display scales, and smooth in between.
 pub(crate) const ICON_TEXTURE_OPTIONS: egui::TextureOptions =
     egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
-/// The `art` file names, listed by build.rs.
-#[cfg(target_arch = "wasm32")]
-mod art_files {
-    include!(concat!(env!("OUT_DIR"), "/art_files.rs"));
-}
 
 /// When an image that failed to load may be fetched again.
 struct ImageRetry {
@@ -512,9 +507,7 @@ impl FECharacterCreator {
         // The web build has its art list baked in, so its libraries need no fetch
         #[cfg(target_arch = "wasm32")]
         if assets_tx
-            .send(Ok(fecc_core::file_io::asset_libraries_from_files(
-                art_files::ART_FILES,
-            )))
+            .send(Ok(fecc_core::file_io::baked_asset_libraries()))
             .is_err()
         {
             log::warn!("Assets receiver dropped before libraries were sent");

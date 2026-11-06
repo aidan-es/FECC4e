@@ -15,6 +15,9 @@ strum_macros = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }
 imageproc = { workspace = true }
 
+[build-dependencies]
+fecc_art_bundle = { workspace = true, features = ["write"] }
+
 # Native
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["fs", "macros", "rt-multi-thread"] }
@@ -25,3 +28,5 @@ wasm-bindgen = { workspace = true }
 web-sys = { workspace = true }
 js-sys = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
+fecc_art_bundle = { workspace = true }
+futures-util = { workspace = true }

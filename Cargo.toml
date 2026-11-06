@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "fecc_art_bundle",
     "fecc_core",
     "fecc_gui",
     "fecc_cli",
@@ -29,6 +30,7 @@ egui = { version = "0.37.0", default-features = false }
 egui-notify = "0.24.0"
 egui_commonmark = "0.26.0"
 egui_extras = "0.37.0"
+fecc_art_bundle = { path = "fecc_art_bundle" }
 fecc_core = { path = "fecc_core" }
 futures-channel = "0.3.34"
 futures-util = "0.3.34"
@@ -37,6 +39,7 @@ imageproc = { version = "0.27.0", default-features = false }
 indexmap = "2.14.2"
 itertools = "0.15.0"
 log = "0.4.35"
+png = "0.18.1"
 pulldown-cmark = "0.13.6"
 rand = "0.10.3"
 rfd = "0.17.2"
@@ -63,6 +66,7 @@ serde-wasm-bindgen = "0.6.5"
 # Build Only:
 base64 = "0.23.1"
 epaint_default_fonts = "0.37.0"
+flate2 = "1.1.11"
 read-fonts = "0.46.0"
 sha2 = "0.11.1"
 skera = "0.9.0"

@@ -50,7 +50,7 @@ pub fn resource_dir() -> &'static Path {
 
 /// Asynchronously loads all character assets from the `art` directory into libraries.
 ///
-/// The web build has no directory to scan, so it uses [`asset_libraries_from_files`] instead.
+/// The web build has no directory to scan, so it uses [`baked_asset_libraries`] instead.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn load_asset_libraries()
 -> Result<HashMap<AssetType, IndexMap<String, Asset>>, Box<dyn Error + Send + Sync>> {
@@ -83,10 +83,16 @@ fn art_libraries_in(
     Ok(asset_libraries_from_files(&file_names))
 }
 
-/// Builds the libraries from a list of `art` file names.
+/// Builds the libraries from the `art` file list that build.rs bakes into the web build.
 ///
-/// The web build uses the list its build script bakes in, so it needs no fetch.
-pub fn asset_libraries_from_files(
+/// Needs no fetch, so the libraries are ready for the first frame.
+#[cfg(target_arch = "wasm32")]
+pub fn baked_asset_libraries() -> HashMap<AssetType, IndexMap<String, Asset>> {
+    asset_libraries_from_files(web_art::ART_FILES)
+}
+
+/// Builds the libraries from a list of `art` file names.
+fn asset_libraries_from_files(
     files: &[impl AsRef<str>],
 ) -> HashMap<AssetType, IndexMap<String, Asset>> {
     let mut asset_libraries = empty_asset_libraries();
@@ -163,11 +169,15 @@ mod wasm {
         #[wasm_bindgen(js_name = fetch_text, catch)]
         pub async fn fetch_text(url: &str) -> Result<JsValue, JsValue>;
 
-        #[wasm_bindgen(js_name = fetch_image_bytes, catch)]
-        pub async fn fetch_image_bytes(url: &str, priority: &str) -> Result<JsValue, JsValue>;
-
         #[wasm_bindgen(js_name = trigger_download, catch)]
         pub fn trigger_download(bytes: &[u8], filename: &str) -> Result<JsValue, JsValue>;
+    }
+
+    // Shared with the 404 page, as index.html has Trunk copy it to the site root
+    #[wasm_bindgen(module = "/src/art_bundle.js")]
+    extern "C" {
+        #[wasm_bindgen(js_name = fetch_gzip_bytes, catch)]
+        pub async fn fetch_gzip_bytes(url: &str, priority: &str) -> Result<JsValue, JsValue>;
     }
 }
 
@@ -205,36 +215,143 @@ pub async fn preload_image_bytes(path: &Path) -> Result<Vec<u8>, Box<dyn Error +
     load_image_bytes(path).await
 }
 
-/// Asynchronously loads the raw bytes of an image file (WASM version).
+/// Asynchronously loads the raw bytes of an `art` image (WASM version).
+///
+/// Takes it from its part type's bundle, which is fetched the first time it's needed.
 #[cfg(target_arch = "wasm32")]
 pub async fn load_image_bytes(path: &Path) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
-    fetch_image(path, "auto").await
+    web_art::load(path, "auto").await
 }
 
-/// Asynchronously loads the raw bytes of an image file for background preloading (WASM version).
+/// Asynchronously loads the raw bytes of an `art` image for background preloading (WASM version).
 ///
-/// Fetches at low priority, so the browser and server can put images the user is
-/// waiting on first.
+/// Starts fetching every bundle at low priority, so the browser and server can put art the user
+/// is waiting on first, and the preload doesn't wait on the bundles one at a time.
 #[cfg(target_arch = "wasm32")]
 pub async fn preload_image_bytes(path: &Path) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
-    fetch_image(path, "low").await
+    web_art::load(path, "low").await
 }
 
-/// Fetches an image file with the given fetch priority hint.
+/// The web build's art, which comes in one bundle per part type.
+///
+/// A thousand small requests cost more than the art itself, and add a fetch callback for each
+/// image. See [`fecc_art_bundle`] for the format.
 #[cfg(target_arch = "wasm32")]
-async fn fetch_image(path: &Path, priority: &str) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
-    let path = path.to_str().ok_or("Invalid path")?;
-    // Encode each part of the path, as file names may contain tags such as `{Iscaneus}`
-    let url = path
-        .split('/')
-        .map(|part| String::from(js_sys::encode_uri_component(part)))
-        .collect::<Vec<_>>()
-        .join("/");
-    let bytes_val = wasm::fetch_image_bytes(&url, priority)
-        .await
-        .map_err(|e| e.as_string().unwrap_or_else(|| "JS error".to_string()))?;
-    let bytes: Vec<u8> = js_sys::Uint8Array::new(&bytes_val).to_vec();
-    Ok(bytes)
+mod web_art {
+    use super::wasm;
+    use futures_util::FutureExt as _;
+    use futures_util::future::{LocalBoxFuture, Shared};
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::error::Error;
+    use std::ops::Range;
+    use std::path::Path;
+    use std::rc::Rc;
+    use wasm_bindgen::{JsCast as _, JsValue};
+
+    include!(concat!(env!("OUT_DIR"), "/art.rs"));
+
+    /// A fetched bundle, with where each file sits in it.
+    struct Bundle {
+        contents: Vec<u8>,
+        files: HashMap<String, Range<usize>>,
+    }
+
+    /// A bundle fetch that every image in the bundle waits on.
+    type BundleFetch = Shared<LocalBoxFuture<'static, Result<Rc<Bundle>, String>>>;
+
+    thread_local! {
+        /// Bundles that are fetched or on their way, so each is fetched once.
+        static FETCHES: RefCell<HashMap<&'static str, BundleFetch>> = RefCell::default();
+    }
+
+    /// Loads an image's bytes from its bundle, fetching the bundle with the given priority hint.
+    ///
+    /// A low priority load starts fetching every bundle.
+    pub(super) async fn load(
+        path: &Path,
+        priority: &'static str,
+    ) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("Invalid path")?;
+        let bundle_name = fecc_art_bundle::bundle_key(file_name)
+            .and_then(|key| {
+                ART_BUNDLES
+                    .iter()
+                    .find(|(bundle_key, _)| *bundle_key == key)
+            })
+            .map(|(_, bundle_name)| *bundle_name)
+            .ok_or_else(|| format!("{file_name} isn't in an art bundle"))?;
+
+        if priority == "low" {
+            for (_, other_bundle) in ART_BUNDLES {
+                if let (fetch, true) = start_fetch(other_bundle, priority) {
+                    wasm_bindgen_futures::spawn_local(fetch.map(|_| ()));
+                }
+            }
+        }
+        let (fetch, _) = start_fetch(bundle_name, priority);
+
+        match fetch.clone().await {
+            Ok(bundle) => Ok(bundle
+                .files
+                .get(file_name)
+                .map(|range| bundle.contents[range.clone()].to_vec())
+                .ok_or_else(|| format!("{file_name} is missing from art/{bundle_name}"))?),
+            Err(e) => {
+                // Forget the failed fetch, so the next attempt fetches it again
+                FETCHES.with_borrow_mut(|fetches| {
+                    if fetches
+                        .get(bundle_name)
+                        .is_some_and(|current| current.ptr_eq(&fetch))
+                    {
+                        fetches.remove(bundle_name);
+                    }
+                });
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Returns a bundle's fetch, and whether it's new, as it only runs once something awaits it.
+    fn start_fetch(bundle_name: &'static str, priority: &'static str) -> (BundleFetch, bool) {
+        FETCHES.with_borrow_mut(|fetches| {
+            if let Some(fetch) = fetches.get(bundle_name) {
+                return (fetch.clone(), false);
+            }
+            let fetch = fetch_bundle(bundle_name, priority).boxed_local().shared();
+            fetches.insert(bundle_name, fetch.clone());
+            (fetch, true)
+        })
+    }
+
+    /// Fetches a bundle and lists its files.
+    async fn fetch_bundle(bundle_name: &str, priority: &str) -> Result<Rc<Bundle>, String> {
+        let url = format!("art/{bundle_name}");
+        let bytes = wasm::fetch_gzip_bytes(&url, priority)
+            .await
+            .map_err(|e| format!("Failed to fetch {url}: {}", js_error_message(&e)))?;
+        let contents = js_sys::Uint8Array::new(&bytes).to_vec();
+
+        let files = fecc_art_bundle::entries(&contents)
+            .map_err(|e| format!("{url}: {e}"))?
+            .into_iter()
+            .map(|(name, range)| (name.to_owned(), range))
+            .collect();
+
+        Ok(Rc::new(Bundle { contents, files }))
+    }
+
+    /// The message of a thrown JavaScript error.
+    fn js_error_message(error: &JsValue) -> String {
+        error
+            .dyn_ref::<js_sys::Error>()
+            .map(|error| String::from(error.message()))
+            .or_else(|| error.as_string())
+            .unwrap_or_else(|| "unknown error".to_owned())
+    }
 }
 
 /// Parses colours from a CSV reader.

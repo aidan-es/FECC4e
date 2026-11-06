@@ -1,4 +1,4 @@
-// Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+// Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 /**
  * Fetches the text content of a file from a given URL.
  * @param {string} url - The URL of the file to fetch.
@@ -14,27 +14,6 @@ export async function fetch_text(url) {
         return await response.text();
     } catch (e) {
         console.error(`Failed to fetch file at ${url}:`, e);
-        return null;
-    }
-}
-
-/**
- * Fetches the binary content (bytes) of an image file from a given URL.
- * @param {string} url - The URL of the image file to fetch.
- * @param {string} priority - The fetch priority hint: "auto" or "low" (for background preloading).
- * @returns {Promise<Uint8Array|null>} A promise that resolves with the image data as a Uint8Array, or null if an error occurs.
- */
-export async function fetch_image_bytes(url, priority) {
-    try {
-        const response = await fetch(url, { priority });
-        if (!response.ok) {
-            console.error(`HTTP error! status: ${response.status} for ${url}`);
-            return null;
-        }
-        const arrayBuffer = await response.arrayBuffer();
-        return new Uint8Array(arrayBuffer);
-    } catch (e) {
-        console.error(`Failed to fetch image bytes at ${url}:`, e);
         return null;
     }
 }
