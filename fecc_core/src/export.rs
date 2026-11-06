@@ -1,4 +1,4 @@
-// Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+// Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 use crate::asset::AssetType;
 use crate::character::Character;
 use crate::recolour::recolour;
@@ -6,7 +6,36 @@ use crate::types::Point;
 use image::{Rgba, RgbaImage, imageops};
 use imageproc::geometric_transformations::{Interpolation, rotate_about_center};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use strum_macros::Display;
+
+/// The longest side a part can be scaled to, which is twice the largest custom export size.
+///
+/// A part can be saved or dragged to any scale, and the scaled image has to fit in memory.
+const MAX_SCALED_SIDE: f32 = 8192.0;
+
+/// The reasons a character can't be exported.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ExportError {
+    /// The canvas or the export size has no area.
+    EmptySize,
+    /// A part would be larger than `MAX_SCALED_SIDE` once scaled.
+    PartTooLarge(AssetType),
+}
+
+impl fmt::Display for ExportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptySize => write!(f, "The canvas or export size is empty."),
+            Self::PartTooLarge(part) => write!(
+                f,
+                "The {part} is too large to export. Shrink or replace it, then try again."
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ExportError {}
 
 /// Defines the output dimensions for the exported character images.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize, Display)]
@@ -67,6 +96,25 @@ impl ExportSize {
     }
 }
 
+/// Returns the part the user selects to resize `part`, as the back of the hair moves with the hair.
+fn selectable_part(part: AssetType) -> AssetType {
+    if part == AssetType::HairBack {
+        AssetType::Hair
+    } else {
+        part
+    }
+}
+
+/// Returns the size of an image at `scale`, or `None` if its longest side would be over
+/// `MAX_SCALED_SIDE`.
+fn scaled_size(width: u32, height: u32, scale: f32) -> Option<(u32, u32)> {
+    let scaled_width = (width as f32 * scale).round();
+    let scaled_height = (height as f32 * scale).round();
+
+    (scaled_width.max(scaled_height) <= MAX_SCALED_SIDE)
+        .then_some((scaled_width as u32, scaled_height as u32))
+}
+
 /// Exports a character portrait or token as an `RgbaImage`.
 ///
 /// Composites the character's parts into a single image, applying
@@ -76,13 +124,13 @@ pub fn export_character(
     parts_to_draw: &[AssetType],
     output_size: (u32, u32),
     ui_canvas_size: Point,
-) -> Option<RgbaImage> {
+) -> Result<RgbaImage, ExportError> {
     if ui_canvas_size.x <= 0.0
         || ui_canvas_size.y <= 0.0
         || output_size.0 == 0
         || output_size.1 == 0
     {
-        return None;
+        return Err(ExportError::EmptySize);
     }
 
     // Uniform scaling factor from UI canvas to exported image.
@@ -110,8 +158,9 @@ pub fn export_character(
 
             // Scale the asset image based on its UI scale and the export scale.
             let final_scale_factor = part.scale * export_scale;
-            let scaled_width = (part_image.width() as f32 * final_scale_factor).round() as u32;
-            let scaled_height = (part_image.height() as f32 * final_scale_factor).round() as u32;
+            let (scaled_width, scaled_height) =
+                scaled_size(part_image.width(), part_image.height(), final_scale_factor)
+                    .ok_or(ExportError::PartTooLarge(selectable_part(*part_type)))?;
 
             if scaled_width == 0 || scaled_height == 0 {
                 continue;
@@ -155,7 +204,7 @@ pub fn export_character(
 
     let crop_x = buffer_centre_x - (output_size.0 / 2);
     let crop_y = buffer_centre_y - (output_size.1 / 2);
-    Some(imageops::crop_imm(&buffer, crop_x, crop_y, output_size.0, output_size.1).to_image())
+    Ok(imageops::crop_imm(&buffer, crop_x, crop_y, output_size.0, output_size.1).to_image())
 }
 
 #[cfg(test)]
@@ -189,13 +238,90 @@ mod tests {
     }
 
     #[test]
+    fn test_scaled_size_applies_ordinary_scales() {
+        assert_eq!(scaled_size(96, 80, 2.0), Some((192, 160)));
+        assert_eq!(scaled_size(96, 80, 0.5), Some((48, 40)));
+        assert_eq!(scaled_size(96, 80, 0.0), Some((0, 0)));
+    }
+
+    #[test]
+    fn test_scaled_size_allows_up_to_the_limit() {
+        assert_eq!(scaled_size(4096, 2048, 2.0), Some((8192, 4096)));
+    }
+
+    #[test]
+    fn test_scaled_size_rejects_scales_over_the_limit() {
+        for scale in [2.01, 1e30, f32::INFINITY, f32::NAN] {
+            assert_eq!(scaled_size(4096, 2048, scale), None, "scale {scale}");
+        }
+    }
+
+    /// A character with a 10x10 part of the given type at the given scale.
+    fn character_with_part(part_type: AssetType, scale: f32) -> Character {
+        let mut asset = Asset::new(
+            "Test".to_string(),
+            std::path::PathBuf::new(),
+            None,
+            part_type,
+        );
+        asset.image_data = Some(Arc::new(RgbaImage::new(10, 10)));
+
+        let mut character = Character::default();
+        character.set_character_part(
+            &part_type,
+            CharacterPart {
+                position: Point::new(50.0, 50.0),
+                scale,
+                rotation: 0.0,
+                flipped: false,
+                asset,
+            },
+        );
+        character
+    }
+
+    #[test]
+    fn test_export_character_stops_at_a_part_too_large() {
+        for (part_type, named_part) in [
+            (AssetType::Face, AssetType::Face),
+            (AssetType::HairBack, AssetType::Hair),
+        ] {
+            let character = character_with_part(part_type, f32::INFINITY);
+
+            let result = export_character(
+                &character,
+                &[part_type],
+                (100, 100),
+                Point::new(100.0, 100.0),
+            );
+
+            assert_eq!(result, Err(ExportError::PartTooLarge(named_part)));
+        }
+    }
+
+    #[test]
+    fn test_export_character_rejects_empty_sizes() {
+        let character = Character::default();
+        let canvas = Point::new(100.0, 100.0);
+
+        assert_eq!(
+            export_character(&character, &[], (0, 100), canvas),
+            Err(ExportError::EmptySize)
+        );
+        assert_eq!(
+            export_character(&character, &[], (100, 100), Point::new(0.0, 100.0)),
+            Err(ExportError::EmptySize)
+        );
+    }
+
+    #[test]
     fn test_export_character_empty() {
         let character = Character::default();
         let ui_canvas = Point::new(100.0, 100.0);
 
         let result = export_character(&character, &[AssetType::Face], (100, 100), ui_canvas);
 
-        assert!(result.is_some());
+        assert!(result.is_ok());
         // Should be fully transparent
         let img = result.unwrap();
         for pixel in img.pixels() {
@@ -235,7 +361,7 @@ mod tests {
 
         let result = export_character(&character, &[AssetType::Face], (100, 100), ui_canvas);
 
-        assert!(result.is_some());
+        assert!(result.is_ok());
         let img = result.unwrap();
 
         let centre_pixel = img.get_pixel(50, 50);
@@ -287,7 +413,7 @@ mod tests {
         let ui_canvas = Point::new(120.0, 80.0);
         let result = export_character(&character, &[AssetType::Face], (120, 80), ui_canvas);
 
-        assert!(result.is_some());
+        assert!(result.is_ok());
         let img = result.unwrap();
         assert_eq!(img.width(), 120);
         assert_eq!(img.height(), 80);

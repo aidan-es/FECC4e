@@ -7,4 +7,14 @@ watch = ["style.css", "../art/ART.md"]
 [[hooks]]
 stage = "pre_build"
 command = "cargo"
-command_arguments = ["run", "--bin", "build_html"]
+command_arguments = ["run", "--package", "fecc_web_tools", "--bin", "build_html"]
+
+[[hooks]]
+stage = "post_build"
+command = "cargo"
+command_arguments = ["run", "--package", "fecc_web_tools", "--bin", "build_art_bundles"]
+
+[[hooks]]
+stage = "post_build"
+command = "cargo"
+command_arguments = ["run", "--package", "fecc_web_tools", "--bin", "build_headers"]

@@ -1,0 +1,62 @@
+name: Upload Cloudflare preview on PR
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  build_and_preview:
+    # Dependabot PRs get no Actions secrets, so they can't upload
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    # Shows each upload as a deployment on the PR, linked to that upload's own URL
+    environment:
+      name: preview
+      url: ${{ steps.urls.outputs.version }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Setup Rust Toolchain
+        run: rustup toolchain install
+
+      - name: Cache Rust dependencies (Project)
+        uses: Swatinem/rust-cache@v2.9.3
+
+      - name: Install Trunk
+        uses: ./.github/actions/install-trunk
+
+      - name: Build with Trunk
+        working-directory: fecc_gui
+        run: trunk build --release
+
+      - name: Upload preview to Cloudflare
+        id: upload
+        uses: cloudflare/wrangler-action@v4.1.3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.156.2"
+          command: versions upload --preview-alias pr-${{ github.event.pull_request.number }}
+
+      - name: Find the preview URLs
+        id: urls
+        env:
+          UPLOAD_OUTPUT: ${{ steps.upload.outputs.command-output }}
+        run: |
+          # Fails the job if wrangler stops printing either URL
+          alias_url=$(grep -oP 'Version Preview Alias URL: \Khttps://\S+' <<< "$UPLOAD_OUTPUT" | head -n 1)
+          version_url=$(grep -oP 'Version Preview URL: \Khttps://\S+' <<< "$UPLOAD_OUTPUT" | head -n 1)
+          echo "alias=$alias_url" >> "$GITHUB_OUTPUT"
+          echo "version=$version_url" >> "$GITHUB_OUTPUT"
+
+      - name: Comment preview URLs on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ALIAS_URL: ${{ steps.urls.outputs.alias }}
+          VERSION_URL: ${{ steps.urls.outputs.version }}
+        run: |
+          # Name the commit, so the comment changes with each push
+          body=$(printf 'Preview: %s\n\nThis push only (%s): %s' "$ALIAS_URL" "${HEAD_SHA::7}" "$VERSION_URL")
+          gh pr comment "$PR_NUMBER" --edit-last --create-if-none --body "$body"

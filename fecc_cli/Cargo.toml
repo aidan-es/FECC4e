@@ -1,10 +1,12 @@
 [package]
 name = "fecc_cli"
-version = "0.3.1"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
+fecc_art_bundle = { workspace = true, features = ["write"] }
 fecc_core = { workspace = true }
+png = { workspace = true }
 image = { workspace = true, features = ["png"] }
 tokio = { workspace = true, features = ["full"] }
 log = { workspace = true }

@@ -1,0 +1,38 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # Security updates aren't held back by this
+    cooldown:
+      default-days: 7
+    # One PR for all actions, as each update changes the same lockfile
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    # Security updates aren't held back by this
+    cooldown:
+      default-days: 7
+    # Must match the version eframe uses, so update it by hand with egui
+    ignore:
+      - dependency-name: winit
+        update-types:
+          - "version-update:semver-major"
+    groups:
+      # Released together, and each 0.x release is breaking
+      egui:
+        patterns:
+          - "eframe"
+          - "egui*"
+          - "epaint*"
+      cargo-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"

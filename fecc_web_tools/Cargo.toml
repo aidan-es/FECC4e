@@ -1,0 +1,14 @@
+[package]
+name = "fecc_web_tools"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+pulldown-cmark = { workspace = true } # For building HTML pages
+base64 = { workspace = true } # For building the _headers file
+sha2 = { workspace = true } # For building the _headers file
+fecc_art_bundle = { workspace = true, features = ["write"] } # For building the art bundles
+
+[lints]
+workspace = true

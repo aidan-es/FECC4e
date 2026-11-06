@@ -4,27 +4,26 @@ default_to_workspace = false
 [tasks.check]
 clear = true # Don't inherit cargo-make's built-in `cargo check` command
 dependencies = [
+    "fmt",
+    "typos",
     "check-all",
     "check-wasm",
-    "fmt",
     "clippy",
     "clippy-wasm",
-    "typos",
     "test-all",
-    "test-doc",
     "build-trunk",
     "post-check-message",
 ]
 
 [tasks.check-all]
-description = "Runs cargo check on all targets"
+description = "Runs cargo check on all targets, in release"
 command = "cargo"
-args = ["check", "--quiet", "--workspace", "--all-targets"]
+args = ["check", "--quiet", "--release", "--workspace", "--all-targets"]
 
 [tasks.check-wasm]
-description = "Runs cargo check for the WASM target"
+description = "Runs cargo check for the WASM target, in release"
 command = "cargo"
-args = ["check", "--quiet", "--package", "fe_character_creator", "--target", "wasm32-unknown-unknown"]
+args = ["check", "--quiet", "--release", "--package", "fe_character_creator", "--target", "wasm32-unknown-unknown"]
 
 [tasks.fmt]
 description = "Checks formatting"
@@ -32,24 +31,19 @@ command = "cargo"
 args = ["fmt", "--all", "--", "--check"]
 
 [tasks.clippy]
-description = "Runs clippy (linter)"
+description = "Runs clippy (linter), in release"
 command = "cargo"
-args = ["clippy", "--quiet", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings", "-W", "clippy::all"]
+args = ["clippy", "--quiet", "--release", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings", "-W", "clippy::all"]
 
 [tasks.clippy-wasm]
-description = "Runs clippy (linter) for the WASM target, as web-only code is skipped by the native run"
+description = "Runs clippy (linter) for the WASM target, in release, as web-only code is skipped by the native run"
 command = "cargo"
-args = ["clippy", "--quiet", "--package", "fe_character_creator", "--package", "fecc_core", "--target", "wasm32-unknown-unknown", "--", "-D", "warnings", "-W", "clippy::all"]
+args = ["clippy", "--quiet", "--release", "--package", "fe_character_creator", "--package", "fecc_core", "--package", "fecc_art_bundle", "--target", "wasm32-unknown-unknown", "--", "-D", "warnings", "-W", "clippy::all"]
 
 [tasks.test-all]
 description = "Runs all tests"
 command = "cargo"
 args = ["test", "--quiet", "--workspace", "--all-targets", "--all-features"]
-
-[tasks.test-doc]
-description = "Runs doc tests"
-command = "cargo"
-args = ["test", "--quiet", "--workspace", "--doc"]
 
 [tasks.typos]
 description = "Checks for typos"

@@ -1,4 +1,4 @@
-// Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+// Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 //! Fire Emblem Character Creator application. It handles the initialisation of the
 //! application window using `eframe` and sets up logging.
 //! The application supports both native and WebAssembly (WASM) builds, with//! conditional compilation (`#[cfg]`) used to manage platform-specific code.
@@ -8,6 +8,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+#[cfg(not(target_arch = "wasm32"))]
+mod app_dirs;
 pub(crate) mod extensions;
 mod fonts;
 
@@ -36,7 +38,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "FE Character Creator",
+        app_dirs::APP_NAME,
         native_options,
         Box::new(|cc| Ok(Box::new(FECharacterCreator::new(cc)))),
     )
@@ -110,24 +112,62 @@ fn setup_logging() -> Result<(), Box<dyn std::error::Error>> {
             .chain(std::io::stdout());
     }
 
+    // Release build: Log to a file in the platform's folder for logs
     #[cfg(not(debug_assertions))]
-    {
-        use std::path::PathBuf;
-        // Release build: Log to a file in the system's config directory
+    let file_warnings = {
+        let log_dir = app_dirs::log_dir().ok_or("Failed to find a folder for the log")?;
+        std::fs::create_dir_all(&log_dir)?;
 
-        let config_dir: PathBuf =
-            dirs_next::config_dir().ok_or("Failed to find a config directory")?;
-
-        let app_log_dir = config_dir.join("FE Character Creator");
-
-        std::fs::create_dir_all(&app_log_dir)?;
-
-        let log_file = app_log_dir.join("app.log");
-
+        let log_file = log_dir.join("app.log");
+        let warnings = prepare_log_file(&log_file);
         config = config.chain(fern::log_file(log_file)?);
-    }
+        warnings
+    };
 
     config.apply()?;
 
+    #[cfg(not(debug_assertions))]
+    for warning in file_warnings {
+        log::warn!("{warning}");
+    }
+
     Ok(())
+}
+
+/// Keeps the previous run's log, and removes the one from where 0.3 kept it.
+///
+/// Returns warnings to log once logging is set up.
+#[cfg(all(not(target_arch = "wasm32"), not(debug_assertions)))]
+fn prepare_log_file(log_file: &std::path::Path) -> Vec<String> {
+    use std::io::ErrorKind;
+
+    let mut warnings = Vec::new();
+
+    // Rename rather than append, so the log only holds the last two runs
+    let old_run = log_file.with_file_name("app.old.log");
+    if let Err(e) = std::fs::rename(log_file, &old_run)
+        && e.kind() != ErrorKind::NotFound
+    {
+        warnings.push(format!("Failed to keep the previous log: {e}"));
+    }
+
+    // Remove the log from beside the settings, where 0.3 kept it, once users have moved on
+    if let Some(old_dir) = dirs::config_dir().map(|dir| dir.join(app_dirs::APP_NAME))
+        && log_file.parent() != Some(old_dir.as_path())
+    {
+        match std::fs::remove_file(old_dir.join("app.log")) {
+            Ok(()) => {
+                // Also remove the folder, unless it holds something else
+                if let Err(e) = std::fs::remove_dir(&old_dir)
+                    && e.kind() != ErrorKind::DirectoryNotEmpty
+                {
+                    warnings.push(format!("Failed to remove the 0.3 log folder: {e}"));
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => warnings.push(format!("Failed to remove the 0.3 log: {e}")),
+        }
+    }
+
+    warnings
 }

@@ -4,6 +4,9 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+
 env:
   APP_NAME: fe_character_creator
   CARGO_TERM_COLOR: always
@@ -15,23 +18,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Install Rust toolchain
         # Installs the version, targets and components pinned in rust-toolchain
         run: rustup toolchain install
 
       - name: Install cargo-make
-        uses: davidB/rust-cargo-make@v1
+        uses: ./.github/actions/install-cargo-make
 
       - name: Install Trunk
         uses: ./.github/actions/install-trunk
 
       # We'll cache cargo registry and cargo make installs
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.9.3
         with:
           key: "cargo-make-checks"
+
+      - name: Check Cargo.lock is up to date
+        # Cargo make's steps would quietly update it, but native.yml builds with --locked
+        run: cargo metadata --locked --format-version 1 > /dev/null
 
       - name: Run Cargo Make Check
         # This runs: fmt, clippy, typos, tests, build-trunk

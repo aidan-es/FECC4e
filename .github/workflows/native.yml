@@ -39,13 +39,13 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Install Rust toolchain
         run: rustup toolchain install
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.9.3
 
       - name: Build binary
         run: cargo build --release --locked --package fe_character_creator --target ${{ matrix.target }}

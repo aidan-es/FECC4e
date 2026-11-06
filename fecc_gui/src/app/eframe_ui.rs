@@ -1,6 +1,8 @@
-// Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+// Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 use super::{CanvasType, ICON_TEXTURE_OPTIONS, asset_matches};
 use crate::FECharacterCreator;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::app_dirs;
 use crate::extensions::color32::Contrast as _;
 use crate::extensions::tag_label::{TagKind, TagLabel as _};
 use crate::extensions::toggle_switch::toggle;
@@ -10,11 +12,13 @@ use eframe::epaint::{Color32, Stroke};
 use egui::{Button, Context, Image, RichText, Ui};
 use egui_commonmark::CommonMarkViewer;
 use egui_extras::{Column, TableBuilder};
-use fecc_core::asset::{Asset, AssetType};
+#[cfg(target_arch = "wasm32")]
+use fecc_core::asset::Asset;
+use fecc_core::asset::AssetType;
 use fecc_core::asset_tags::{AvailableTags, TagChoice, category_title};
 use fecc_core::character::Colourable::Skin;
 use fecc_core::character::{CharacterPartColours, Colourable, Shade};
-use fecc_core::export::{ExportSize, export_character};
+use fecc_core::export::{ExportError, ExportSize, export_character};
 use fecc_core::random::{randomize_assets, randomize_colours};
 use fecc_core::types::Rgba;
 use image::RgbaImage;
@@ -36,7 +40,7 @@ impl eframe::App for FECharacterCreator {
         // Receive background loads every frame, regardless of which panels are open
         self.update_stored_colour_palettes();
         self.update_stored_asset_libraries(&ctx);
-        self.update_stored_image_data_cache();
+        self.update_stored_image_data_cache(&ctx);
         {
             let mut character = self.character.clone();
             let asset_libraries = &self.asset_libraries;
@@ -74,11 +78,10 @@ impl eframe::App for FECharacterCreator {
                             .or_default()
                             .insert(asset.id.clone(), asset);
                         self.refresh_available_tags();
-                        self.add_art_error = None;
                         self.toasts.success("Successfully added art.");
                     }
                     Err(e) => {
-                        self.add_art_error = Some(e);
+                        self.report_failure("Failed to add art", e);
                     }
                 }
             }
@@ -96,8 +99,7 @@ impl eframe::App for FECharacterCreator {
                         self.toasts.success("Successfully loaded character.");
                     }
                     Err(e) => {
-                        log::error!("Failed to load character: {e}");
-                        self.toasts.error("Failed to load character.");
+                        self.report_failure("Failed to load character", e);
                     }
                 }
             }
@@ -247,22 +249,21 @@ impl eframe::App for FECharacterCreator {
                     ui.text_edit_singleline(&mut self.search_query);
                 });
                 let search_query_cleaned = self.search_query.to_lowercase();
-                let library = self
-                    .asset_libraries
-                    .get(&self.active_tab)
-                    .cloned()
-                    .unwrap_or_default();
-                let shown_assets: Vec<&Asset> = library
-                    .values()
-                    .filter(|asset| asset_matches(&self.asset_filter, &search_query_cleaned, asset))
+                let library = self.asset_libraries.get(&self.active_tab);
+                let library_size = library.map_or(0, |library| library.len());
+                // Positions rather than references, as drawing the art needs `self` mutably
+                let shown_assets: Vec<usize> = library
+                    .iter()
+                    .flat_map(|library| library.values())
+                    .enumerate()
+                    .filter(|(_, asset)| {
+                        asset_matches(&self.asset_filter, &search_query_cleaned, asset)
+                    })
+                    .map(|(index, _)| index)
                     .collect();
                 ui.label(
-                    RichText::new(format!(
-                        "Showing {} of {}",
-                        shown_assets.len(),
-                        library.len()
-                    ))
-                    .weak(),
+                    RichText::new(format!("Showing {} of {library_size}", shown_assets.len()))
+                        .weak(),
                 );
                 ui.separator();
 
@@ -295,11 +296,11 @@ impl eframe::App for FECharacterCreator {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let asset_type = self.active_tab;
 
-                    if let Some(asset) = self.display_assets(&ctx, ui, &library, &shown_assets) {
+                    if let Some(asset) = self.display_assets(&ctx, ui, asset_type, &shown_assets) {
                         self.select_asset(&asset, asset_type);
                     }
 
-                    if shown_assets.is_empty() && !library.is_empty() {
+                    if shown_assets.is_empty() && library_size > 0 {
                         ui.label("Nothing matches the filter and search.");
                         if ui.button("Show everything").clicked() {
                             self.asset_filter = Default::default();
@@ -441,7 +442,13 @@ impl eframe::App for FECharacterCreator {
                                         });
                                     }
 
-                                    if self.colour_picker_open_state[&(colourable, shade)] {
+                                    // A session saved before a colourable or shade existed lacks its entry.
+                                    if self
+                                        .colour_picker_open_state
+                                        .get(&(colourable, shade))
+                                        .copied()
+                                        .unwrap_or(false)
+                                    {
                                         self.present_colour_picker(ui.ctx(), colourable, shade);
                                     }
                                 }
@@ -535,8 +542,8 @@ impl eframe::App for FECharacterCreator {
                                 );
                             }
                         }
-                        Err(_) => {
-                            ui.label("Unknown");
+                        Err(e) => {
+                            ui.label("Unknown").on_hover_text(e.to_string());
                         }
                     }
                 });
@@ -648,7 +655,8 @@ impl eframe::App for FECharacterCreator {
                         self.export_size_selection.portrait().1
                     ))
                     .clicked()
-                    && let Some(image) = export_character(
+                {
+                    match export_character(
                         &self.character,
                         &[
                             AssetType::HairBack,
@@ -665,9 +673,18 @@ impl eframe::App for FECharacterCreator {
                             self.portrait_rect.width(),
                             self.portrait_rect.height(),
                         ),
-                    )
-                {
-                    Self::save_image(&image, self.character.name.clone() + "_portrait");
+                    ) {
+                        Ok(image) => {
+                            if let Err(e) =
+                                Self::save_image(&image, self.character.name.clone() + "_portrait")
+                            {
+                                self.report_failure("Failed to save portrait", e);
+                            }
+                        }
+                        Err(e) => {
+                            self.report_failure("Failed to export portrait", e);
+                        }
+                    }
                 }
 
                 if ui
@@ -677,7 +694,8 @@ impl eframe::App for FECharacterCreator {
                         self.export_size_selection.token().1
                     ))
                     .clicked()
-                    && let Some(image) = export_character(
+                {
+                    match export_character(
                         &self.character,
                         &[AssetType::Token],
                         (
@@ -688,9 +706,18 @@ impl eframe::App for FECharacterCreator {
                             self.token_rect.width(),
                             self.token_rect.height(),
                         ),
-                    )
-                {
-                    Self::save_image(&image, self.character.name.clone() + "token");
+                    ) {
+                        Ok(image) => {
+                            if let Err(e) =
+                                Self::save_image(&image, self.character.name.clone() + "_token")
+                            {
+                                self.report_failure("Failed to save token", e);
+                            }
+                        }
+                        Err(e) => {
+                            self.report_failure("Failed to export token", e);
+                        }
+                    }
                 }
             },
         );
@@ -709,12 +736,14 @@ impl eframe::App for FECharacterCreator {
 
                 ui.separator();
 
-                if ui.button("Save FECC").clicked() {
-                    self.save_fecc(self.character.name.clone());
+                if ui.button("Save FECC").clicked()
+                    && let Err(e) = self.save_fecc(self.character.name.clone())
+                {
+                    self.report_failure("Failed to save character", e);
                 }
 
                 if ui.button("Load FECC").clicked() {
-                    self.load_fecc();
+                    self.load_fecc(&ctx);
                 }
             },
         );
@@ -724,16 +753,9 @@ impl eframe::App for FECharacterCreator {
             self.update_rect(&ctx, ui);
         });
 
-        // After the panels, so this frame's visible loads are already queued ahead of it
-        self.continue_preload(&ctx);
-
         self.new_active_tab = false;
         self.randomise_used = false;
         self.toasts.show(&ctx);
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.add_art_error = None;
-        }
     }
 
     /// Saves the application state to persistent storage.
@@ -764,7 +786,7 @@ impl FECharacterCreator {
 
                 if ui.button("Upload File...").clicked() {
                     let sender = self.new_user_asset_sender.clone();
-                    self.add_art_error = None; // Clear previous errors
+                    let ctx = ctx.clone();
                     wasm_bindgen_futures::spawn_local(async move {
                         if let Some(file) = rfd::AsyncFileDialog::new().pick_file().await {
                             let file_name = file.file_name();
@@ -773,13 +795,9 @@ impl FECharacterCreator {
                             if sender.unbounded_send(result).is_err() {
                                 log::warn!("Asset receiver dropped before the new art was sent");
                             }
+                            ctx.request_repaint();
                         }
                     });
-                }
-
-                if let Some(error) = &self.add_art_error {
-                    log::error!("Failed to add art: {error}");
-                    self.toasts.error("Failed to add art.");
                 }
             });
     }
@@ -819,6 +837,9 @@ FECC4e's text uses subsets of egui's default fonts:
 - emoji-icon-font, Copyright 2014 John Slegers ([MIT Licence](https://github.com/jslegers/emoji-icon-font))
 "#;
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut open_failure = None;
+
         egui::Window::new("About")
             .open(&mut self.about_window_open)
             .collapsible(false)
@@ -840,7 +861,30 @@ FECC4e's text uses subsets of egui's default fonts:
                             font_licences_content,
                         );
                     });
+
+                #[cfg(not(target_arch = "wasm32"))]
+                egui::CollapsingHeader::new("Log and Settings")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let log_dir = app_dirs::log_dir();
+                            if let Some(e) = open_folder_button(ui, "Open Log Folder", log_dir) {
+                                open_failure = Some(("Failed to open the log folder", e));
+                            }
+                            let settings_dir = app_dirs::settings_dir();
+                            if let Some(e) =
+                                open_folder_button(ui, "Open Settings Folder", settings_dir)
+                            {
+                                open_failure = Some(("Failed to open the settings folder", e));
+                            }
+                        });
+                    });
             });
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some((message, e)) = open_failure {
+            self.report_failure(message, e);
+        }
     }
 
     fn update_stored_colour_palettes(&mut self) {
@@ -863,7 +907,8 @@ FECC4e's text uses subsets of egui's default fonts:
     fn update_stored_asset_libraries(&mut self, ctx: &Context) {
         if let Some(mut rx) = self.asset_libraries_receiver.take() {
             match rx.try_recv() {
-                Ok(Some(libs)) => {
+                Ok(Some(Err(e))) => self.report_failure("Failed to load the art library", e),
+                Ok(Some(Ok(libs))) => {
                     self.asset_libraries = libs;
                     self.refresh_available_tags();
 
@@ -896,7 +941,7 @@ FECC4e's text uses subsets of egui's default fonts:
                         }
                     }
 
-                    self.queue_preload();
+                    self.spawn_preload(ctx);
                 }
                 Ok(None) => {
                     self.asset_libraries_receiver = Some(rx);
@@ -906,11 +951,10 @@ FECC4e's text uses subsets of egui's default fonts:
         }
     }
 
-    fn update_stored_image_data_cache(&mut self) {
+    fn update_stored_image_data_cache(&mut self, ctx: &Context) {
+        let now = ctx.input(|input| input.time);
         if let Some(rx) = self.image_receiver.as_mut() {
             while let Ok((id, result)) = rx.try_recv() {
-                self.visible_loads.remove(&id);
-                self.preload_in_flight.remove(&id);
                 match result {
                     Ok(image_data) => {
                         let asset_type: Result<AssetType, _> =
@@ -924,9 +968,8 @@ FECC4e's text uses subsets of egui's default fonts:
                                     .and_then(|lib| lib.get_mut(&id))
                                 {
                                     asset.image_data = Some(image_data);
-                                    self.images_in_flight.remove(&id);
+                                    self.image_retries.clear(&id);
                                 } else {
-                                    // Stays in flight so it isn't fetched again every frame
                                     log::warn!("Received image for unknown asset: {id}");
                                 }
                             }
@@ -934,7 +977,11 @@ FECC4e's text uses subsets of egui's default fonts:
                         }
                     }
                     Err(e) => {
-                        log::error!("Failed to load image {id}: {e}");
+                        self.image_loads.release(&id);
+                        // Only the first, as an unreachable image keeps failing
+                        if self.image_retries.record_failure(&id, now) {
+                            log::error!("Failed to load image {id}: {e}");
+                        }
                     }
                 }
             }
@@ -1038,7 +1085,7 @@ FECC4e's text uses subsets of egui's default fonts:
     }
 
     /// Counts the colours used by the portrait and token together, and checks for semi-transparency.
-    fn count_unique_colours(&mut self, pointer_down: bool) -> Result<(usize, bool), &'static str> {
+    fn count_unique_colours(&mut self, pointer_down: bool) -> Result<(usize, bool), ExportError> {
         let portrait_size = self.portrait_rect.size();
         let token_size = self.token_rect.size();
 
@@ -1052,7 +1099,7 @@ FECC4e's text uses subsets of egui's default fonts:
         }
 
         let result = Self::analyse_combined_colours(
-            &export_character(
+            export_character(
                 &self.character,
                 &[
                     AssetType::HairBack,
@@ -1064,7 +1111,7 @@ FECC4e's text uses subsets of egui's default fonts:
                 (96, 96),
                 fecc_core::types::Point::new(portrait_size.x, portrait_size.y),
             ),
-            &export_character(
+            export_character(
                 &self.character,
                 &[AssetType::Token],
                 (64, 64),
@@ -1081,11 +1128,11 @@ FECC4e's text uses subsets of egui's default fonts:
     }
 
     fn analyse_combined_colours(
-        img_a: &Option<RgbaImage>,
-        img_b: &Option<RgbaImage>,
-    ) -> Result<(usize, bool), &'static str> {
-        let img_a = img_a.as_ref().ok_or("Image A missing")?;
-        let img_b = img_b.as_ref().ok_or("Image B missing")?;
+        img_a: Result<RgbaImage, ExportError>,
+        img_b: Result<RgbaImage, ExportError>,
+    ) -> Result<(usize, bool), ExportError> {
+        let img_a = img_a?;
+        let img_b = img_b?;
         let mut unique_colours = HashSet::default();
         let mut has_semi_transparency = false;
 
@@ -1240,5 +1287,24 @@ fn artist_info(artist: &str) -> Option<(&'static str, Option<&'static str>)> {
         )),
         "iscaneus" => Some(("Iscaneus", Some("https://www.deviantart.com/iscaneus"))),
         _ => None,
+    }
+}
+
+/// Shows a button that opens a folder, with the folder's path on hover.
+///
+/// Returns why the folder didn't open.
+#[cfg(not(target_arch = "wasm32"))]
+fn open_folder_button(ui: &mut Ui, label: &str, dir: Option<std::path::PathBuf>) -> Option<String> {
+    let Some(dir) = dir else {
+        ui.add_enabled(false, Button::new(label))
+            .on_disabled_hover_text("This platform has no such folder");
+        return None;
+    };
+
+    let response = ui.button(label).on_hover_text(dir.display().to_string());
+    if response.clicked() {
+        app_dirs::open_folder(&dir).err()
+    } else {
+        None
     }
 }
