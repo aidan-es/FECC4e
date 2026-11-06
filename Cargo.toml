@@ -52,7 +52,8 @@ wasm-bindgen-futures = "0.4.80"
 # Native Only:
 chrono = "0.4.45"
 fern = "0.7.1"
-dirs-next = "2.0.0"
+dirs = "7.0.0"
+opener = "0.9.0"
 winit = "0.30.13"
 # Web Only:
 wasm-bindgen = "0.2.130"

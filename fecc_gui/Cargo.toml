@@ -44,7 +44,8 @@ eframe = { workspace = true, features = ["accesskit", "clipboard", "links", "per
 winit = { workspace = true }
 chrono = { workspace = true }
 fern = { workspace = true }
-dirs-next = { workspace = true }
+dirs = { workspace = true }
+opener = { workspace = true }
 tokio = { workspace = true, features = ["fs", "macros", "rt-multi-thread"] }
 
 

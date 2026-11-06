@@ -1,6 +1,8 @@
 // Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 use super::{CanvasType, ICON_TEXTURE_OPTIONS, asset_matches};
 use crate::FECharacterCreator;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::app_dirs;
 use crate::extensions::color32::Contrast as _;
 use crate::extensions::tag_label::{TagKind, TagLabel as _};
 use crate::extensions::toggle_switch::toggle;
@@ -835,6 +837,9 @@ FECC4e's text uses subsets of egui's default fonts:
 - emoji-icon-font, Copyright 2014 John Slegers ([MIT Licence](https://github.com/jslegers/emoji-icon-font))
 "#;
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut open_failure = None;
+
         egui::Window::new("About")
             .open(&mut self.about_window_open)
             .collapsible(false)
@@ -856,7 +861,30 @@ FECC4e's text uses subsets of egui's default fonts:
                             font_licences_content,
                         );
                     });
+
+                #[cfg(not(target_arch = "wasm32"))]
+                egui::CollapsingHeader::new("Log and Settings")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let log_dir = app_dirs::log_dir();
+                            if let Some(e) = open_folder_button(ui, "Open Log Folder", log_dir) {
+                                open_failure = Some(("Failed to open the log folder", e));
+                            }
+                            let settings_dir = app_dirs::settings_dir();
+                            if let Some(e) =
+                                open_folder_button(ui, "Open Settings Folder", settings_dir)
+                            {
+                                open_failure = Some(("Failed to open the settings folder", e));
+                            }
+                        });
+                    });
             });
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some((message, e)) = open_failure {
+            self.report_failure(message, e);
+        }
     }
 
     fn update_stored_colour_palettes(&mut self) {
@@ -1259,5 +1287,24 @@ fn artist_info(artist: &str) -> Option<(&'static str, Option<&'static str>)> {
         )),
         "iscaneus" => Some(("Iscaneus", Some("https://www.deviantart.com/iscaneus"))),
         _ => None,
+    }
+}
+
+/// Shows a button that opens a folder, with the folder's path on hover.
+///
+/// Returns why the folder didn't open.
+#[cfg(not(target_arch = "wasm32"))]
+fn open_folder_button(ui: &mut Ui, label: &str, dir: Option<std::path::PathBuf>) -> Option<String> {
+    let Some(dir) = dir else {
+        ui.add_enabled(false, Button::new(label))
+            .on_disabled_hover_text("This platform has no such folder");
+        return None;
+    };
+
+    let response = ui.button(label).on_hover_text(dir.display().to_string());
+    if response.clicked() {
+        app_dirs::open_folder(&dir).err()
+    } else {
+        None
     }
 }
