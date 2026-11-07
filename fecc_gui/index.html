@@ -24,6 +24,14 @@
 
 <head>
     <meta content="FE Character Creator" property="og:site_name"/>
+
+    <script>
+        if (window.trustedTypes && trustedTypes.createPolicy) {
+            trustedTypes.createPolicy("default", {
+                createHTML: (html) => (html.includes("<") ? null : html),
+            });
+        }
+    </script>
     <title>FE Character Creator</title>
 
     <link data-bin="fe_character_creator" data-trunk data-wasm-opt="z" rel="rust" />
@@ -158,8 +166,12 @@
                 && WebAssembly.validate(simd)
                 && WebAssembly.validate(referenceTypes);
             if (!supported) {
-                document.getElementById("loading_text").innerHTML =
-                    '<p style="font-size:16px">Sorry, this browser does not support some of the WebAssembly features that FECC4e requires.<br></p>';
+                const message = document.createElement("p");
+                message.style.fontSize = "16px";
+                message.textContent = "Sorry, this browser does not support some of the WebAssembly features that FECC4e requires.";
+                const loadingText = document.getElementById("loading_text");
+                loadingText.textContent = "";
+                loadingText.appendChild(message);
             }
         })();
     </script>

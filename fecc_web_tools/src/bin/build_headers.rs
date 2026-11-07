@@ -73,14 +73,18 @@ fn csp_hash(script: &str) -> String {
 /// Matching rules are combined and repeated headers joined, so `Cache-Control` rules must not
 /// overlap. Anything without a rule is revalidated, as that's Cloudflare's default.
 ///
-/// `'wasm-unsafe-eval'` allows the wasm to compile. `'unsafe-inline'` covers the page's style tag
-/// and the one `rfd` adds.
+/// `'wasm-unsafe-eval'` allows the wasm to compile. In `script-src`, `'unsafe-inline'` is only a
+/// fallback for browsers too old for hashes, as browsers that support them ignore it. In
+/// `style-src`, it covers the page's style tag and the one `rfd` adds.
+///
+/// Trusted Types blocks HTML strings, except through the `default` policy in `index.html`, the
+/// only policy allowed.
 fn headers(script_hashes: &str) -> String {
     format!(
         "\
 /*
-  Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval' {script_hashes}; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
-  Strict-Transport-Security: max-age=31536000
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval' {script_hashes} 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types default
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
   X-Content-Type-Options: nosniff

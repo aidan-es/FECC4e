@@ -1,7 +1,8 @@
 // Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 //! Fire Emblem Character Creator application. It handles the initialisation of the
 //! application window using `eframe` and sets up logging.
-//! The application supports both native and WebAssembly (WASM) builds, with//! conditional compilation (`#[cfg]`) used to manage platform-specific code.
+//! The application supports both native and WebAssembly (WASM) builds, with
+//! conditional compilation (`#[cfg]`) used to manage platform-specific code.
 
 #![warn(clippy::all, rust_2018_idioms)]
 // Hide the console window on Windows in release
@@ -83,7 +84,11 @@ fn main() {
                     loading_text.remove();
                 }
                 Err(e) => {
-                    loading_text.set_inner_html("<p> The app has crashed :( </p>");
+                    // Built as an element, as the CSP's Trusted Types rule blocks HTML strings
+                    if let Ok(message) = document.create_element("p") {
+                        message.set_text_content(Some("The app has crashed :("));
+                        loading_text.replace_children_with_node_1(&message);
+                    }
                     panic!("Failed to start eframe: {e:?}");
                 }
             }
