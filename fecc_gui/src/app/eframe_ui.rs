@@ -829,7 +829,7 @@ You can download native (e.g desktop) versions of the app [here](https://github.
 
 ### Credits
 Built with [Rust](https://www.rust-lang.org/) and [egui](https://github.com/emilk/egui).
-See the [third-party licences]({third_party_licences}) for the Rust crates FECC4e uses.
+See the [third-party licences]({third_party_licences}) for the Rust crates and fonts FECC4e uses.
 
 FECC4e was written by myself, Aidan. It is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by [TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scala with further updates by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc).
 
@@ -837,14 +837,6 @@ Art assets are principally of the Game Boy Advance era Fire Emblem games develop
 Many original token art assets are by [Iscaneus](https://www.deviantart.com/iscaneus).
 "#
         );
-
-        let font_licences_content = r#"
-FECC4e's text uses subsets of egui's default fonts:
-- Ubuntu Light, Copyright 2011 Canonical Ltd. ([Ubuntu Font Licence 1.0](https://ubuntu.com/legal/font-licence)), modified as "Ubuntu Light derivative FECC"
-- Hack, Copyright 2018 Source Foundry Authors and 2003 Bitstream Inc. ([MIT and Bitstream Vera Licence](https://github.com/source-foundry/Hack/blob/master/LICENSE.md))
-- Noto Emoji, Copyright 2013 Google Inc. ([SIL Open Font Licence 1.1](https://openfontlicense.org/open-font-license-official-text/))
-- emoji-icon-font, Copyright 2014 John Slegers ([MIT Licence](https://github.com/jslegers/emoji-icon-font))
-"#;
 
         #[cfg(not(target_arch = "wasm32"))]
         let mut open_failure = None;
@@ -860,16 +852,6 @@ FECC4e's text uses subsets of egui's default fonts:
                     &mut self.markdown_cache,
                     &markdown_content,
                 );
-
-                egui::CollapsingHeader::new("Font Licences")
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        CommonMarkViewer::new().show(
-                            ui,
-                            &mut self.markdown_cache,
-                            font_licences_content,
-                        );
-                    });
 
                 #[cfg(not(target_arch = "wasm32"))]
                 egui::CollapsingHeader::new("Log and Settings")

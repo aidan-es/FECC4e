@@ -44,4 +44,4 @@ runs:
         --manifest-path fecc_gui/Cargo.toml
         --config fecc_gui/licences/about.toml
         --output-file assets/third-party-licences.html
-        fecc_gui/licences/about.hbs
+        --name about fecc_gui/licences

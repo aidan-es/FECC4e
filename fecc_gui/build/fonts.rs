@@ -1,8 +1,10 @@
-// Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+// Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 //! Subsets egui's default fonts for the app.
 //!
 //! The full fonts add roughly 670 KB (compressed) to the download, but the app only draws Latin
 //! text and a handful of symbols. Subsetting keeps just those characters.
+//!
+//! The fonts are credited in `fecc_gui/licences/fonts.hbs`. Update it if the fonts change.
 
 use read_fonts::collections::IntSet;
 use read_fonts::collections::int_set::Domain;

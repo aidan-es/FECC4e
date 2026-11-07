@@ -30,6 +30,9 @@ jobs:
       - name: Install Trunk
         uses: ./.github/actions/install-trunk
 
+      - name: Install cargo-deny
+        uses: ./.github/actions/install-cargo-deny
+
       # We'll cache cargo registry and cargo make installs
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2.9.3
@@ -41,7 +44,7 @@ jobs:
         run: cargo metadata --locked --format-version 1 > /dev/null
 
       - name: Run Cargo Make Check
-        # This runs: fmt, clippy, typos, tests, build-trunk
+        # This runs: fmt, typos, deny, clippy, tests, build-trunk
         run: cargo make check
 
   # --- Licences (Runs on each OS that native.yml releases for) ---

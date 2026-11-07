@@ -6,6 +6,7 @@ clear = true # Don't inherit cargo-make's built-in `cargo check` command
 dependencies = [
     "fmt",
     "typos",
+    "deny",
     "check-all",
     "check-wasm",
     "clippy",
@@ -47,8 +48,15 @@ args = ["test", "--quiet", "--workspace", "--all-targets", "--all-features"]
 
 [tasks.typos]
 description = "Checks for typos"
-install_crate = { crate_name = "typos-cli", binary = "typos", test_arg = "--help", version = "1.50.3" }
+install_crate = { crate_name = "typos-cli", binary = "typos", test_arg = "--help", version = "1.52.0" }
 command = "typos"
+
+[tasks.deny]
+description = "Checks dependencies for security advisories, licences, bans and sources"
+install_crate = { crate_name = "cargo-deny", binary = "cargo-deny", test_arg = "--version", version = "0.20.2" }
+install_crate_args = ["--locked"]
+command = "cargo"
+args = ["deny", "check"]
 
 [tasks.build-trunk]
 description = "Builds the Trunk (WASM) project"
@@ -78,5 +86,5 @@ args = [
     "--manifest-path", "fecc_gui/Cargo.toml",
     "--config", "fecc_gui/licences/about.toml",
     "--output-file", "assets/third-party-licences.html",
-    "fecc_gui/licences/about.hbs",
+    "--name", "about", "fecc_gui/licences", # Folder, so about.hbs can include fonts.hbs
 ]
