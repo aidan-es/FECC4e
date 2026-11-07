@@ -22,21 +22,24 @@ runs:
         url="https://github.com/EmbarkStudios/cargo-about/releases/download/$CARGO_ABOUT_VERSION/$name.tar.gz"
         archive="$RUNNER_TEMP/cargo-about.tar.gz"
         curl -sSfL -o "$archive" "$url"
-        # macOS runners have shasum but not always sha256sum
+        # macOS runners have shasum but not always sha256sum. Both read from stdin, as sha256sum
+        # escapes the backslashes in Windows paths and prefixes the hash with "\".
         if command -v sha256sum > /dev/null; then
-          actual=$(sha256sum "$archive" | cut -d ' ' -f 1)
+          actual=$(sha256sum < "$archive" | cut -d ' ' -f 1)
         else
-          actual=$(shasum -a 256 "$archive" | cut -d ' ' -f 1)
+          actual=$(shasum -a 256 < "$archive" | cut -d ' ' -f 1)
         fi
         if [ "$actual" != "$sha256" ]; then
           echo "cargo-about checksum mismatch: expected $sha256, got $actual"
           exit 1
         fi
-        # macOS runners may not have this folder, so create it and put it on the PATH
+        # macOS runners may not have this folder. Cargo finds subcommands in it without the PATH.
         bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+        # Windows runners set CARGO_HOME to a "C:\" path, which GNU tar can't use
+        if command -v cygpath > /dev/null; then
+          bin=$(cygpath -u "$bin")
+        fi
         mkdir -p "$bin"
-        echo "$bin" >> "$GITHUB_PATH"
-        export PATH="$bin:$PATH"
         # Read from stdin, as GNU tar on Windows treats "D:" in a file name as a remote host
         tar -xzf - -C "$bin" --strip-components=1 "$name/$binary" < "$archive"
         cargo about --version
