@@ -32,8 +32,13 @@ runs:
           echo "cargo-about checksum mismatch: expected $sha256, got $actual"
           exit 1
         fi
+        # macOS runners may not have this folder, so create it and put it on the PATH
+        bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+        mkdir -p "$bin"
+        echo "$bin" >> "$GITHUB_PATH"
+        export PATH="$bin:$PATH"
         # Read from stdin, as GNU tar on Windows treats "D:" in a file name as a remote host
-        tar -xzf - -C "$HOME/.cargo/bin" --strip-components=1 "$name/$binary" < "$archive"
+        tar -xzf - -C "$bin" --strip-components=1 "$name/$binary" < "$archive"
         cargo about --version
 
     - name: Generate the licences page
