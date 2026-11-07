@@ -1,5 +1,5 @@
 // Copyright (C) 2026 aidan-es. Licensed under the GNU AGPLv3.
-//! Bundles the `art` PNGs for the web build, one bundle per part type.
+//! Bundles the `art` PNG files for the web build, one bundle per part type.
 //!
 //! A thousand small requests cost more than the art itself, so the web build fetches each
 //! part type's files in one go. A bundle holds the original PNG files back to back:
