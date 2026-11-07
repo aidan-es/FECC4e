@@ -805,6 +805,14 @@ impl FECharacterCreator {
     fn show_about_window(&mut self, ctx: &Context) {
         let version = env!("CARGO_PKG_VERSION");
 
+        // The web build serves the licences page. Native builds link to the hosted copy, and
+        // their release archives also include it in the assets folder.
+        #[cfg(target_arch = "wasm32")]
+        let third_party_licences = "assets/third-party-licences.html";
+        #[cfg(not(target_arch = "wasm32"))]
+        let third_party_licences =
+            "https://fecc.introverted.social/assets/third-party-licences.html";
+
         let markdown_content = format!(
             r#"
 # FE Character Creator, 4th Edition
@@ -821,6 +829,7 @@ You can download native (e.g desktop) versions of the app [here](https://github.
 
 ### Credits
 Built with [Rust](https://www.rust-lang.org/) and [egui](https://github.com/emilk/egui).
+See the [third-party licences]({third_party_licences}) for the Rust crates FECC4e uses.
 
 FECC4e was written by myself, Aidan. It is an update and full rewrite (in Rust) of the Fire Emblem Character Creator originally written in Java by [TheFlyingMinotaur](https://github.com/TheFlyingMinotaur/CharacterCreatorRelease), updated by [BaconMaster120](https://www.reddit.com/r/fireemblem/comments/dggx4e/fire_emblem_portrait_maker_upgrade/), and converted to Scala with further updates by [ValeTheVioletMote](https://github.com/ValeTheVioletMote/fecc).
 

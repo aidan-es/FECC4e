@@ -22,6 +22,9 @@ jobs:
       - name: Install Trunk
         uses: ./.github/actions/install-trunk
 
+      - name: Refresh third-party licences
+        uses: ./.github/actions/refresh-licences
+
       - name: Build with Trunk
         working-directory: fecc_gui
         run: trunk build --release

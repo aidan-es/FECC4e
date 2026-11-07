@@ -43,3 +43,22 @@ jobs:
       - name: Run Cargo Make Check
         # This runs: fmt, clippy, typos, tests, build-trunk
         run: cargo make check
+
+  # --- Licences (Runs on each OS that native.yml releases for) ---
+  licences:
+    name: Licences (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      # Fails on licences about.toml doesn't accept, and on download problems, before a release does
+      - name: Refresh third-party licences
+        uses: ./.github/actions/refresh-licences

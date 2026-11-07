@@ -3,6 +3,7 @@ name = "fe_character_creator"
 version.workspace = true
 authors = ["aidan-es"]
 edition.workspace = true
+license.workspace = true
 default-run = "fe_character_creator"
 
 

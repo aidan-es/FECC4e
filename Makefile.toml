@@ -68,3 +68,15 @@ description = "Prints a success message"
 script = [
     '''echo "All checks passed successfully!"'''
 ]
+[tasks.licences]
+description = "Regenerates assets/third-party-licences.html from the licences of the crates the app ships with"
+install_crate = { crate_name = "cargo-about", binary = "cargo-about", test_arg = "--version", version = "0.9.3" }
+install_crate_args = ["--features", "cli", "--locked"]
+command = "cargo"
+args = [
+    "about", "generate", "--locked", "--fail",
+    "--manifest-path", "fecc_gui/Cargo.toml",
+    "--config", "fecc_gui/licences/about.toml",
+    "--output-file", "assets/third-party-licences.html",
+    "fecc_gui/licences/about.hbs",
+]

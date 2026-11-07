@@ -54,6 +54,9 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
 
+      - name: Refresh third-party licences
+        uses: ./.github/actions/refresh-licences
+
       - name: Prepare staging directory
         shell: bash
         run: |

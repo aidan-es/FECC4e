@@ -11,6 +11,7 @@ members = [
 [workspace.package]
 version = "0.4.0"
 edition = "2024"
+license = "AGPL-3.0-only" # Art assets are excluded, see README.md
 
 [profile.release]
 opt-level = "s"    # Same download as "z" once compressed, but a 13% smaller wasm to compile

@@ -1,0 +1,47 @@
+name: Refresh third-party licences
+description: Downloads the prebuilt cargo-about release and regenerates assets/third-party-licences.html (Linux x86-64, Windows x86-64 and macOS arm64 runners)
+runs:
+  using: composite
+  steps:
+    - name: Download cargo-about
+      shell: bash
+      env:
+        CARGO_ABOUT_VERSION: 0.9.3
+        # Change together with CARGO_ABOUT_VERSION
+        CARGO_ABOUT_SHA256_LINUX: 3ad1e94ea1e63d69d1961f4fb15ccbbe9575d906111f96d2cb4dce6df48f71b4
+        CARGO_ABOUT_SHA256_WINDOWS: 9e2942533ef1c592c4a70bdb384cae1550a3f5fc9ae40379b6662e3d2f16fe02
+        CARGO_ABOUT_SHA256_MACOS: 45520df8680978a6e7c4023ace0e3f311c73efc208cd68e5a7f4ed4822fa0349
+      run: |
+        case "$RUNNER_OS" in
+          Linux) target=x86_64-unknown-linux-musl; sha256=$CARGO_ABOUT_SHA256_LINUX; binary=cargo-about ;;
+          Windows) target=x86_64-pc-windows-msvc; sha256=$CARGO_ABOUT_SHA256_WINDOWS; binary=cargo-about.exe ;;
+          macOS) target=aarch64-apple-darwin; sha256=$CARGO_ABOUT_SHA256_MACOS; binary=cargo-about ;;
+          *) echo "No cargo-about release for $RUNNER_OS"; exit 1 ;;
+        esac
+        name="cargo-about-$CARGO_ABOUT_VERSION-$target"
+        url="https://github.com/EmbarkStudios/cargo-about/releases/download/$CARGO_ABOUT_VERSION/$name.tar.gz"
+        archive="$RUNNER_TEMP/cargo-about.tar.gz"
+        curl -sSfL -o "$archive" "$url"
+        # macOS runners have shasum but not always sha256sum
+        if command -v sha256sum > /dev/null; then
+          actual=$(sha256sum "$archive" | cut -d ' ' -f 1)
+        else
+          actual=$(shasum -a 256 "$archive" | cut -d ' ' -f 1)
+        fi
+        if [ "$actual" != "$sha256" ]; then
+          echo "cargo-about checksum mismatch: expected $sha256, got $actual"
+          exit 1
+        fi
+        # Read from stdin, as GNU tar on Windows treats "D:" in a file name as a remote host
+        tar -xzf - -C "$HOME/.cargo/bin" --strip-components=1 "$name/$binary" < "$archive"
+        cargo about --version
+
+    - name: Generate the licences page
+      shell: bash
+      # Matches `cargo make licences`
+      run: >
+        cargo about generate --locked --fail
+        --manifest-path fecc_gui/Cargo.toml
+        --config fecc_gui/licences/about.toml
+        --output-file assets/third-party-licences.html
+        fecc_gui/licences/about.hbs
