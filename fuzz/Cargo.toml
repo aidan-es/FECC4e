@@ -1,0 +1,69 @@
+# Copyright (C) 2026 aidan-es. Licensed under the GNU AGPLv3.
+# Fuzz targets for the parsers that read files people share. Needs nightly Rust and cargo-fuzz.
+# Run them from the repository root, so the save target finds the art folder:
+#   cargo +nightly fuzz run save -- -timeout=5 -dict=fuzz/dicts/save.dict
+#   cargo +nightly fuzz run save_roundtrip -- -timeout=5 -dict=fuzz/dicts/save.dict
+#   cargo +nightly fuzz run export -- -timeout=5 -dict=fuzz/dicts/save.dict
+#   cargo +nightly fuzz run custom_art -- -timeout=5
+#   cargo +nightly fuzz run asset_name -- -timeout=5
+# `-timeout=5` reports any input that takes over 5 seconds, which libFuzzer otherwise allows 20
+# minutes. Add `-max_total_time=1800` to stop after 30 minutes.
+# On Windows, first put Visual Studio's AddressSanitizer runtime on the PATH. It's the folder
+# holding clang_rt.asan_dynamic-x86_64.dll, in VC\Tools\MSVC\<version>\bin\Hostx64\x64.
+# Crashing inputs are saved to fuzz/artifacts/<target>. Make each one a unit test once fixed.
+# This is its own workspace, so the main build, cargo-deny and the licences page leave it out.
+
+[package]
+name = "fecc_fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+fecc_core = { path = "../fecc_core" }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+indexmap = "2.14.2"
+libfuzzer-sys = "0.4"
+serde_json = "1.0.154"
+
+[[bin]]
+name = "save"
+path = "fuzz_targets/save.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "save_roundtrip"
+path = "fuzz_targets/save_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "export"
+path = "fuzz_targets/export.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "custom_art"
+path = "fuzz_targets/custom_art.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "asset_name"
+path = "fuzz_targets/asset_name.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
