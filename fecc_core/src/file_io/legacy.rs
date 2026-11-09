@@ -1,4 +1,4 @@
-// Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+// Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 pub mod v3_assets;
 
 use crate::asset::{Asset, AssetType};
@@ -114,25 +114,11 @@ pub fn parse_legacy_save(
         character.name = stem.to_owned();
     }
 
-    let colour_start_index = content
-        .find("===COLOR_START===")
-        .ok_or_else(|| "Missing ===COLOR_START=== header".to_owned())?;
-    let colour_end_index = content
-        .find("===COLOR_END===")
-        .ok_or_else(|| "Missing ===COLOR_END=== header".to_owned())?;
-    let toolbox_start_index = content
-        .find("===TOOLBOX_START===")
-        .ok_or_else(|| "Missing ===TOOLBOX_START=== header".to_owned())?;
-    let toolbox_end_index = content
-        .find("===TOOLBOX_END===")
-        .ok_or_else(|| "Missing ===TOOLBOX_END=== header".to_owned())?;
-
-    if colour_start_index >= colour_end_index || toolbox_start_index >= toolbox_end_index {
-        return Err("Invalid section ordering in legacy save file".to_owned());
-    }
+    let (colour_section, _) = section(content, "===COLOR_START===", "===COLOR_END===")?;
+    let (toolbox_section, after_toolbox) =
+        section(content, "===TOOLBOX_START===", "===TOOLBOX_END===")?;
 
     // Parse Colours Section
-    let colour_section = &content[colour_start_index + "===COLOR_START===".len()..colour_end_index];
     for line in colour_section.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -194,8 +180,6 @@ pub fn parse_legacy_save(
 
     // Parse Toolboxes Section
     let mut outlines = Outlines::new();
-    let toolbox_section =
-        &content[toolbox_start_index + "===TOOLBOX_START===".len()..toolbox_end_index];
 
     for line in toolbox_section.lines() {
         let line = line.trim();
@@ -290,7 +274,6 @@ pub fn parse_legacy_save(
     }
 
     // Parse Token Selection Index
-    let after_toolbox = &content[toolbox_end_index + "===TOOLBOX_END===".len()..];
     for line in after_toolbox.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -318,6 +301,25 @@ pub fn parse_legacy_save(
     Ok(character)
 }
 
+/// Returns the text between the `start` and `end` headers, and the text after `end`.
+///
+/// Looks for `end` only after `start`, so headers that overlap, such as
+/// `===COLOR_START===COLOR_END===`, give an error instead of a backwards slice.
+fn section<'a>(content: &'a str, start: &str, end: &str) -> Result<(&'a str, &'a str), String> {
+    let start_index = content
+        .find(start)
+        .ok_or_else(|| format!("Missing {start} header"))?;
+    let body = &content[start_index + start.len()..];
+    let end_index = body.find(end).ok_or_else(|| {
+        if content.contains(end) {
+            "Invalid section ordering in legacy save file".to_owned()
+        } else {
+            format!("Missing {end} header")
+        }
+    })?;
+    Ok((&body[..end_index], &body[end_index + end.len()..]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,6 +339,21 @@ mod tests {
             decode_hex_colour("#382040").unwrap(),
             Rgba::new(56, 32, 64, 255)
         );
+    }
+
+    #[test]
+    fn test_overlapping_headers_give_an_error() {
+        // Found by fuzzing. Each end header starts inside its start header.
+        let libraries = HashMap::new();
+        for content in [
+            "===COLOR_START===COLOR_END===\n===TOOLBOX_START===\n===TOOLBOX_END===\n",
+            "===COLOR_START===\n===COLOR_END===\n===TOOLBOX_START===TOOLBOX_END===\n",
+        ] {
+            assert!(
+                parse_legacy_save(content, None, &libraries).is_err(),
+                "Expected an error for {content:?}"
+            );
+        }
     }
 
     #[test]
