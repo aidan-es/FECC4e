@@ -1,13 +1,14 @@
 name: Upload Cloudflare preview on PR
 on: pull_request
-permissions:
-  contents: read
-  pull-requests: write
+permissions: {}
 jobs:
   build_and_preview:
     # Dependabot PRs get no Actions secrets, so they can't upload
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # Checks out the code
+      pull-requests: write # Comments the preview URLs on the PR
     # Shows each upload as a deployment on the PR, linked to that upload's own URL
     environment:
       name: preview
@@ -15,12 +16,16 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7.0.1
+        with:
+          # Nothing here pushes, so the token needn't stay in .git/config for later steps
+          persist-credentials: false
 
       - name: Setup Rust Toolchain
         run: rustup toolchain install
 
+      # Only this PR's own runs share its cache, and they already run its code with these secrets
       - name: Cache Rust dependencies (Project)
-        uses: Swatinem/rust-cache@v2.9.3
+        uses: Swatinem/rust-cache@v2.9.3 # zizmor: ignore[cache-poisoning]
 
       - name: Install Trunk
         uses: ./.github/actions/install-trunk

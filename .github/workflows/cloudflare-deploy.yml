@@ -9,15 +9,18 @@ permissions:
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
+    # Holds the Cloudflare secrets, so only the jobs it allows can read them
+    environment: production
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7.0.1
+        with:
+          # Nothing here pushes, so the token needn't stay in .git/config for later steps
+          persist-credentials: false
 
+      # No rust-cache: releases can't restore the PR caches anyway, and a poisoned cache would ship
       - name: Setup Rust Toolchain
         run: rustup toolchain install
-
-      - name: Cache Rust dependencies (Project)
-        uses: Swatinem/rust-cache@v2.9.3
 
       - name: Install Trunk
         uses: ./.github/actions/install-trunk

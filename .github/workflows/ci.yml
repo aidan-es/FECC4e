@@ -19,6 +19,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
+        with:
+          # Nothing here pushes, so the token needn't stay in .git/config for later steps
+          persist-credentials: false
 
       - name: Install Rust toolchain
         # Installs the version, targets and components pinned in rust-toolchain
@@ -33,6 +36,9 @@ jobs:
       - name: Install cargo-deny
         uses: ./.github/actions/install-cargo-deny
 
+      - name: Install zizmor
+        uses: ./.github/actions/install-zizmor
+
       # We'll cache cargo registry and cargo make installs
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2.9.3
@@ -44,7 +50,7 @@ jobs:
         run: cargo metadata --locked --format-version 1 > /dev/null
 
       - name: Run Cargo Make Check
-        # This runs: fmt, typos, deny, clippy, tests, build-trunk
+        # This runs: fmt, typos, deny, zizmor, clippy, tests, build-trunk
         run: cargo make check
 
   # --- Licences (Runs on each OS that native.yml releases for) ---
@@ -58,6 +64,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
+        with:
+          # Nothing here pushes, so the token needn't stay in .git/config for later steps
+          persist-credentials: false
 
       - name: Install Rust toolchain
         run: rustup toolchain install

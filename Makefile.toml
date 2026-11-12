@@ -7,6 +7,7 @@ dependencies = [
     "fmt",
     "typos",
     "deny",
+    "zizmor",
     "check-all",
     "check-wasm",
     "clippy",
@@ -54,9 +55,15 @@ command = "typos"
 [tasks.deny]
 description = "Checks dependencies for security advisories, licences, bans and sources"
 install_crate = { crate_name = "cargo-deny", binary = "cargo-deny", test_arg = "--version", version = "0.20.2" }
-install_crate_args = ["--locked"]
 command = "cargo"
 args = ["deny", "check"]
+
+[tasks.zizmor]
+description = "Checks the GitHub workflows and actions for security problems"
+install_crate = { crate_name = "zizmor", binary = "zizmor", test_arg = "--version", version = "1.32.0" }
+command = "zizmor"
+# Offline keeps it the same with or without a GH_TOKEN; Dependabot covers vulnerable actions
+args = ["--offline", "."]
 
 [tasks.build-trunk]
 description = "Builds the Trunk (WASM) project"
@@ -79,7 +86,7 @@ script = [
 [tasks.licences]
 description = "Regenerates assets/third-party-licences.html from the licences of the crates the app ships with"
 install_crate = { crate_name = "cargo-about", binary = "cargo-about", test_arg = "--version", version = "0.9.3" }
-install_crate_args = ["--features", "cli", "--locked"]
+install_crate_args = ["--features", "cli"] # cargo-make adds --locked itself
 command = "cargo"
 args = [
     "about", "generate", "--locked", "--fail",

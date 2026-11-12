@@ -1,0 +1,7 @@
+# Copyright (C) 2026 aidan-es. Licensed under the GNU AGPLv3.
+# Settings for zizmor, the workflow checker run by `cargo make zizmor`
+rules:
+  # Asks for `uses: $/...` over `./...`, which GitHub added in July 2026. Revisit once it's
+  # confirmed to work for local composite actions
+  self-repository:
+    disable: true
