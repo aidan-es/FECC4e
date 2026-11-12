@@ -4,27 +4,28 @@ default_to_workspace = false
 [tasks.check]
 clear = true # Don't inherit cargo-make's built-in `cargo check` command
 dependencies = [
+    "fmt",
+    "typos",
+    "deny",
+    "zizmor",
     "check-all",
     "check-wasm",
-    "fmt",
     "clippy",
     "clippy-wasm",
-    "typos",
     "test-all",
-    "test-doc",
     "build-trunk",
     "post-check-message",
 ]
 
 [tasks.check-all]
-description = "Runs cargo check on all targets"
+description = "Runs cargo check on all targets, in release"
 command = "cargo"
-args = ["check", "--quiet", "--workspace", "--all-targets"]
+args = ["check", "--quiet", "--release", "--workspace", "--all-targets"]
 
 [tasks.check-wasm]
-description = "Runs cargo check for the WASM target"
+description = "Runs cargo check for the WASM target, in release"
 command = "cargo"
-args = ["check", "--quiet", "--package", "fe_character_creator", "--target", "wasm32-unknown-unknown"]
+args = ["check", "--quiet", "--release", "--package", "fe_character_creator", "--target", "wasm32-unknown-unknown"]
 
 [tasks.fmt]
 description = "Checks formatting"
@@ -32,29 +33,37 @@ command = "cargo"
 args = ["fmt", "--all", "--", "--check"]
 
 [tasks.clippy]
-description = "Runs clippy (linter)"
+description = "Runs clippy (linter), in release"
 command = "cargo"
-args = ["clippy", "--quiet", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings", "-W", "clippy::all"]
+args = ["clippy", "--quiet", "--release", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings", "-W", "clippy::all"]
 
 [tasks.clippy-wasm]
-description = "Runs clippy (linter) for the WASM target, as web-only code is skipped by the native run"
+description = "Runs clippy (linter) for the WASM target, in release, as web-only code is skipped by the native run"
 command = "cargo"
-args = ["clippy", "--quiet", "--package", "fe_character_creator", "--package", "fecc_core", "--target", "wasm32-unknown-unknown", "--", "-D", "warnings", "-W", "clippy::all"]
+args = ["clippy", "--quiet", "--release", "--package", "fe_character_creator", "--package", "fecc_core", "--package", "fecc_art_bundle", "--target", "wasm32-unknown-unknown", "--", "-D", "warnings", "-W", "clippy::all"]
 
 [tasks.test-all]
 description = "Runs all tests"
 command = "cargo"
 args = ["test", "--quiet", "--workspace", "--all-targets", "--all-features"]
 
-[tasks.test-doc]
-description = "Runs doc tests"
-command = "cargo"
-args = ["test", "--quiet", "--workspace", "--doc"]
-
 [tasks.typos]
 description = "Checks for typos"
-install_crate = { crate_name = "typos-cli", binary = "typos", test_arg = "--help", version = "1.50.3" }
+install_crate = { crate_name = "typos-cli", binary = "typos", test_arg = "--help", version = "1.52.0" }
 command = "typos"
+
+[tasks.deny]
+description = "Checks dependencies for security advisories, licences, bans and sources"
+install_crate = { crate_name = "cargo-deny", binary = "cargo-deny", test_arg = "--version", version = "0.20.2" }
+command = "cargo"
+args = ["deny", "check"]
+
+[tasks.zizmor]
+description = "Checks the GitHub workflows and actions for security problems"
+install_crate = { crate_name = "zizmor", binary = "zizmor", test_arg = "--version", version = "1.32.0" }
+command = "zizmor"
+# Offline keeps it the same with or without a GH_TOKEN; Dependabot covers vulnerable actions
+args = ["--offline", "."]
 
 [tasks.build-trunk]
 description = "Builds the Trunk (WASM) project"
@@ -73,4 +82,16 @@ args = ["serve", "--open", "--release"]
 description = "Prints a success message"
 script = [
     '''echo "All checks passed successfully!"'''
+]
+[tasks.licences]
+description = "Regenerates assets/third-party-licences.html from the licences of the crates the app ships with"
+install_crate = { crate_name = "cargo-about", binary = "cargo-about", test_arg = "--version", version = "0.9.3" }
+install_crate_args = ["--features", "cli"] # cargo-make adds --locked itself
+command = "cargo"
+args = [
+    "about", "generate", "--locked", "--fail",
+    "--manifest-path", "fecc_gui/Cargo.toml",
+    "--config", "fecc_gui/licences/about.toml",
+    "--output-file", "assets/third-party-licences.html",
+    "--name", "about", "fecc_gui/licences", # Folder, so about.hbs can include fonts.hbs
 ]

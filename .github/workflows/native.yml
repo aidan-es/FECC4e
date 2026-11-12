@@ -4,8 +4,7 @@ on:
   release:
     types: [ published ] # Runs when you click "Publish Release" in GitHub UI
 
-permissions:
-  contents: write
+permissions: {}
 
 env:
   APP_NAME: fe_character_creator
@@ -14,6 +13,13 @@ jobs:
   build-and-release:
     name: release-${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write # Uploads the archives to the release
+    # Read by the shell, as expanding ${{ }} inside run: would paste the values into the script
+    env:
+      TARGET: ${{ matrix.target }}
+      ARTIFACT_NAME: ${{ matrix.artifact_name }}
+      ASSET_NAME: ${{ matrix.asset_name }}
     strategy:
       fail-fast: false
       matrix:
@@ -39,27 +45,32 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
+        with:
+          # Nothing here pushes, so the token needn't stay in .git/config for later steps
+          persist-credentials: false
 
+      # No rust-cache: releases can't restore the PR caches anyway, and a poisoned cache would ship
       - name: Install Rust toolchain
         run: rustup toolchain install
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
       - name: Build binary
-        run: cargo build --release --locked --package fe_character_creator --target ${{ matrix.target }}
+        shell: bash
+        run: cargo build --release --locked --package fe_character_creator --target "$TARGET"
 
       - name: Strip binary (Linux/macOS)
         if: matrix.os != 'windows-latest'
-        run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+        run: strip "target/$TARGET/release/$ARTIFACT_NAME"
+
+      - name: Refresh third-party licences
+        uses: ./.github/actions/refresh-licences
 
       - name: Prepare staging directory
         shell: bash
         run: |
           mkdir staging
           # Copy binary
-          cp "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "staging/"
+          cp "target/$TARGET/release/$ARTIFACT_NAME" "staging/"
           # Copy assets (if they exist)
           if [ -d "assets" ]; then cp -r assets staging/; fi
           if [ -d "art" ]; then cp -r art staging/; fi
@@ -69,14 +80,16 @@ jobs:
         shell: bash
         run: |
           cd staging
-          tar -czf ../${{ matrix.asset_name }} *
+          tar -czf "../$ASSET_NAME" *
 
       - name: Create Release Archive (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          Compress-Archive -Path staging/* -DestinationPath ${{ matrix.asset_name }}
+          Compress-Archive -Path staging/* -DestinationPath $env:ASSET_NAME
 
       - name: Upload Release Assets
-        run: gh release upload "${{ github.ref_name }}" "${{ matrix.asset_name }}" --clobber --repo "${{ github.repository }}"
+        shell: bash
+        # GITHUB_REF_NAME is the release's tag
+        run: gh release upload "$GITHUB_REF_NAME" "$ASSET_NAME" --clobber --repo "$GITHUB_REPOSITORY"
         env:
           GH_TOKEN: ${{ github.token }}

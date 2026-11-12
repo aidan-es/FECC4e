@@ -9,6 +9,9 @@ target
 target_ra
 target_wasm
 
+# Wrangler local state
+.wrangler
+
 # Ignore JetBrains IDE configuration
 .idea/
 *.iml

@@ -1,4 +1,4 @@
-// Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+// Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 use std::cmp::PartialEq;
 mod canvas_interaction;
 mod eframe_ui;
@@ -7,10 +7,8 @@ use crate::extensions::tag_label::{TagKind, TagLabel as _};
 use fecc_core::asset::{Asset, AssetType};
 use fecc_core::asset_tags::{AssetFilter, AvailableTags, TagChoice};
 use fecc_core::character::{Character, CharacterPart, ColourPalette, Colourable, Shade};
-use fecc_core::export::ExportSize;
-use fecc_core::file_io::{
-    load_asset_libraries, load_colours_from_csv, load_image_bytes, preload_image_bytes,
-};
+use fecc_core::export::{ExportError, ExportSize};
+use fecc_core::file_io::{load_colours_from_csv, load_image_bytes, preload_image_bytes};
 use fecc_core::types::Point;
 
 use ahash::{HashMap, HashSet};
@@ -19,12 +17,18 @@ use egui_commonmark::CommonMarkCache;
 use egui_notify::{Anchor, Toasts};
 use futures_channel::mpsc;
 use futures_util::future::join_all;
+use futures_util::task::AtomicWaker;
 use image::RgbaImage;
 use indexmap::IndexMap;
 use itertools::iproduct;
-use std::collections::VecDeque;
+use std::error::Error;
+use std::fmt::Display;
+use std::future::poll_fn;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::task::Poll;
+use std::time::Duration;
 use strum::IntoEnumIterator as _;
 use strum_macros::EnumIter;
 
@@ -34,6 +38,18 @@ use tokio::runtime::Runtime;
 /// How many images the background preload fetches at once.
 const PRELOAD_BATCH_SIZE: usize = 16;
 
+/// How long to wait before fetching an image again after its first failure, in seconds.
+const FIRST_IMAGE_RETRY_DELAY: f64 = 2.0;
+
+/// The longest wait between attempts to fetch an image, in seconds.
+const MAX_IMAGE_RETRY_DELAY: f64 = 30.0;
+
+/// How many characters fit on a line of a toast, even on a phone.
+const TOAST_LINE_LENGTH: usize = 48;
+
+/// How long a failure stays on screen, as it's longer to read than the default 3.5 seconds.
+const FAILURE_TOAST_DURATION: Duration = Duration::from_secs(10);
+
 /// Texture options for the PNG icons, which are drawn smaller than their source images.
 ///
 /// The icons are rendered from the SVGs in `assets` at 4× the size they're drawn at. With
@@ -41,8 +57,147 @@ const PRELOAD_BATCH_SIZE: usize = 16;
 pub(crate) const ICON_TEXTURE_OPTIONS: egui::TextureOptions =
     egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
 
+/// When an image that failed to load may be fetched again.
+struct ImageRetry {
+    delay: f64,
+    retry_at: f64,
+}
+
+/// Tracks images that failed to load, so they are fetched again but not on every frame.
+///
+/// Waits longer after each failure and never gives up, so art comes back after a lost connection.
+#[derive(Default)]
+struct ImageRetries(HashMap<String, ImageRetry>);
+
+impl ImageRetries {
+    /// Records a failure, with the time in seconds. Returns whether it's the first in a row.
+    fn record_failure(&mut self, id: &str, now: f64) -> bool {
+        let delay = self.0.get(id).map_or(FIRST_IMAGE_RETRY_DELAY, |retry| {
+            (retry.delay * 2.0).min(MAX_IMAGE_RETRY_DELAY)
+        });
+        let retry = ImageRetry {
+            delay,
+            retry_at: now + delay,
+        };
+        self.0.insert(id.to_owned(), retry).is_none()
+    }
+
+    /// Returns how many seconds are left to wait, if any.
+    fn wait(&self, id: &str, now: f64) -> Option<f64> {
+        self.0
+            .get(id)
+            .map(|retry| retry.retry_at - now)
+            .filter(|wait| *wait > 0.0)
+    }
+
+    /// Forgets an image's failures, once it has loaded.
+    fn clear(&mut self, id: &str) {
+        self.0.remove(id);
+    }
+}
+
 type ImageReceiver = Option<mpsc::UnboundedReceiver<(String, Result<Arc<RgbaImage>, String>)>>;
 pub(crate) type ImageSender = mpsc::UnboundedSender<(String, Result<Arc<RgbaImage>, String>)>;
+type AssetLibrariesReceiver = futures_channel::oneshot::Receiver<
+    Result<std::collections::HashMap<AssetType, IndexMap<String, Asset>>, String>,
+>;
+
+/// What the frames share with the background preload, which runs between them.
+#[derive(Default)]
+struct ImageLoads {
+    /// Images that are loaded or on their way, so none are fetched twice
+    requested: Mutex<HashSet<String>>,
+    /// Loads for what the user is looking at, which the preload waits behind
+    visible: AtomicUsize,
+    /// Wakes the preload when a visible load finishes
+    visible_finished: AtomicWaker,
+    /// Whether the user is waiting on an image that's already on its way
+    repaint_wanted: AtomicBool,
+}
+
+impl ImageLoads {
+    /// Claims an image for loading. Returns false if it's already loaded or on its way.
+    fn request(&self, id: &str) -> bool {
+        self.requested
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id.to_owned())
+    }
+
+    /// Gives up the claim on an image that failed to load, so it can be fetched again.
+    fn release(&self, id: &str) {
+        self.requested
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(id);
+    }
+
+    /// Counts a load for what the user is looking at.
+    fn start_visible(&self) {
+        self.visible.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Counts a finished visible load, and wakes the preload if it's waiting.
+    fn finish_visible(&self) {
+        self.visible.fetch_sub(1, Ordering::SeqCst);
+        self.visible_finished.wake();
+    }
+
+    /// Waits until nothing the user is looking at is loading.
+    async fn wait_for_visible(&self) {
+        poll_fn(|cx| {
+            self.visible_finished.register(cx.waker());
+            if self.visible.load(Ordering::SeqCst) == 0 {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+    }
+}
+
+/// Loads and decodes images together, then sends them to the next frame.
+///
+/// Preloads fetch at low priority, behind anything the user is waiting on. Returns false if
+/// nothing is left to receive the images.
+async fn load_images(sender: &ImageSender, images: Vec<(String, PathBuf)>, preload: bool) -> bool {
+    let results = join_all(images.into_iter().map(|(id, path)| async move {
+        // Start each fetch in its own task, as starting a batch at once blocks slow processors
+        #[cfg(target_arch = "wasm32")]
+        if preload {
+            yield_to_browser().await;
+        }
+
+        let bytes = if preload {
+            preload_image_bytes(&path).await
+        } else {
+            load_image_bytes(&path).await
+        };
+
+        // Let the browser draw first, so images that arrive together aren't all decoded
+        // in one go, which freezes the page on slow processors
+        #[cfg(target_arch = "wasm32")]
+        yield_to_browser().await;
+
+        let result = match bytes {
+            Ok(bytes) => image::load_from_memory(&bytes)
+                .map(|img| Arc::new(img.to_rgba8()))
+                .map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        (id, result)
+    }))
+    .await;
+
+    for result in results {
+        if sender.unbounded_send(result).is_err() {
+            log::warn!("Image receiver dropped before the images were sent");
+            return false;
+        }
+    }
+    true
+}
 
 #[derive(Debug, PartialEq, Clone, Copy, EnumIter, Eq, Hash)]
 pub enum Corner {
@@ -89,7 +244,7 @@ struct ColourCount {
     character: Character,
     portrait_size: Vec2,
     token_size: Vec2,
-    result: Result<(usize, bool), &'static str>,
+    result: Result<(usize, bool), ExportError>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -130,25 +285,15 @@ pub struct FECharacterCreator {
         futures_channel::oneshot::Receiver<std::collections::HashMap<Colourable, ColourPalette>>,
     >,
     #[serde(skip)]
-    asset_libraries_receiver: Option<
-        futures_channel::oneshot::Receiver<
-            std::collections::HashMap<AssetType, IndexMap<String, Asset>>,
-        >,
-    >,
+    asset_libraries_receiver: Option<AssetLibrariesReceiver>,
     #[serde(skip)]
     image_receiver: ImageReceiver,
     #[serde(skip)]
     image_sender: ImageSender,
     #[serde(skip)]
-    images_in_flight: HashSet<String>,
-    /// Loads for what the user is looking at, which the preload waits behind
+    image_loads: Arc<ImageLoads>,
     #[serde(skip)]
-    visible_loads: HashSet<String>,
-    /// Art still to load in the background, so it shows instantly when first needed
-    #[serde(skip)]
-    preload_queue: VecDeque<(AssetType, String)>,
-    #[serde(skip)]
-    preload_in_flight: HashSet<String>,
+    image_retries: ImageRetries,
 
     #[serde(skip)]
     toasts: Toasts,
@@ -186,10 +331,6 @@ pub struct FECharacterCreator {
 
     #[cfg(target_arch = "wasm32")]
     add_art_window_open: bool,
-
-    #[serde(skip)]
-    #[cfg(target_arch = "wasm32")]
-    add_art_error: Option<String>,
 
     #[serde(skip)]
     #[cfg(target_arch = "wasm32")]
@@ -248,10 +389,8 @@ impl Default for FECharacterCreator {
             asset_libraries_receiver: None,
             image_receiver: None,
             image_sender: mpsc::unbounded().0,
-            images_in_flight: Default::default(),
-            visible_loads: Default::default(),
-            preload_queue: Default::default(),
-            preload_in_flight: Default::default(),
+            image_loads: Default::default(),
+            image_retries: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             tokio_runtime: Arc::new(Runtime::new().expect("Failed to create Tokio runtime")),
             selected_part: None,
@@ -271,9 +410,6 @@ impl Default for FECharacterCreator {
 
             #[cfg(target_arch = "wasm32")]
             add_art_window_open: false,
-
-            #[cfg(target_arch = "wasm32")]
-            add_art_error: None,
 
             #[cfg(target_arch = "wasm32")]
             new_user_asset_receiver: Some(rx),
@@ -301,6 +437,13 @@ impl FECharacterCreator {
             if let Some(mut saved_app) = eframe::get_value::<Self>(storage, eframe::APP_KEY) {
                 saved_app.is_character_normalised = true;
                 saved_app.character_needs_asset_refresh = true;
+                let unusable = saved_app.character.repair();
+                if !unusable.is_empty() {
+                    log::warn!(
+                        "Removed parts with an unusable position, scale or rotation: {}",
+                        unusable.join(", ")
+                    );
+                }
                 saved_app
             } else {
                 Default::default()
@@ -321,6 +464,7 @@ impl FECharacterCreator {
 
         // Repaint once each load finish so the results show without waiting for input
         let palettes_ctx = cc.egui_ctx.clone();
+        #[cfg(not(target_arch = "wasm32"))]
         let assets_ctx = cc.egui_ctx.clone();
 
         let (palettes_tx, palettes_rx) = futures_channel::oneshot::channel();
@@ -359,25 +503,29 @@ impl FECharacterCreator {
         };
 
         let (assets_tx, assets_rx) = futures_channel::oneshot::channel();
+
+        // The web build has its art list baked in, so its libraries need no fetch
+        #[cfg(target_arch = "wasm32")]
+        if assets_tx
+            .send(Ok(fecc_core::file_io::baked_asset_libraries()))
+            .is_err()
+        {
+            log::warn!("Assets receiver dropped before libraries were sent");
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         let assets_task = async move {
-            match load_asset_libraries().await {
-                Ok(libs) => {
-                    if assets_tx.send(libs).is_err() {
-                        log::warn!("Assets receiver dropped before libraries were sent");
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to load asset libraries: {e}");
-                }
+            let libraries = fecc_core::file_io::load_asset_libraries()
+                .await
+                .map_err(|e| e.to_string());
+            if assets_tx.send(libraries).is_err() {
+                log::warn!("Assets receiver dropped before libraries were sent");
             }
             assets_ctx.request_repaint();
         };
 
         #[cfg(target_arch = "wasm32")]
-        {
-            wasm_bindgen_futures::spawn_local(palettes_task);
-            wasm_bindgen_futures::spawn_local(assets_task);
-        }
+        wasm_bindgen_futures::spawn_local(palettes_task);
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -409,10 +557,18 @@ impl FECharacterCreator {
                 return None;
             }
 
-            if !self.images_in_flight.contains(&asset.id) {
-                self.images_in_flight.insert(asset.id.clone());
-                self.visible_loads.insert(asset.id.clone());
-                self.spawn_image_loads(ctx, vec![(asset.id.clone(), asset.path.clone())], false);
+            let now = ctx.input(|input| input.time);
+            if let Some(wait) = self.image_retries.wait(&asset.id, now) {
+                ctx.request_repaint_after_secs(wait as f32);
+                return None;
+            }
+
+            if self.image_loads.request(&asset.id) {
+                self.spawn_visible_load(ctx, asset);
+            } else {
+                self.image_loads
+                    .repaint_wanted
+                    .store(true, Ordering::SeqCst);
             }
 
             return None;
@@ -452,133 +608,110 @@ impl FECharacterCreator {
         }
     }
 
-    /// Loads and decodes images in one background task, then repaints once for them all.
-    ///
-    /// Preloads fetch at low priority, behind anything the user is waiting on.
-    fn spawn_image_loads(&self, ctx: &Context, images: Vec<(String, PathBuf)>, preload: bool) {
+    /// Loads an image the user is looking at, then repaints.
+    fn spawn_visible_load(&self, ctx: &Context, asset: &Asset) {
         let sender = self.image_sender.clone();
+        let image_loads = self.image_loads.clone();
         let ctx = ctx.clone();
+        let images = vec![(asset.id.clone(), asset.path.clone())];
 
-        let task = async move {
-            let results = join_all(images.into_iter().map(|(id, path)| async move {
-                let bytes = if preload {
-                    preload_image_bytes(&path).await
-                } else {
-                    load_image_bytes(&path).await
-                };
+        self.image_loads.start_visible();
+        self.spawn_background(async move {
+            load_images(&sender, images, false).await;
+            image_loads.finish_visible();
+            ctx.request_repaint();
+        });
+    }
 
-                // Let the browser draw first, so images that arrive together aren't all decoded
-                // in one go, which freezes the page on slow processors
-                #[cfg(target_arch = "wasm32")]
-                yield_to_browser().await;
+    /// Loads all the art in the background, in asset type order, so it shows instantly when needed.
+    ///
+    /// Runs between frames, as a repaint for each batch blocks slow processors. Only repaints if
+    /// the user is waiting on an image, and once at the end to store what's left.
+    fn spawn_preload(&self, ctx: &Context) {
+        let sender = self.image_sender.clone();
+        let image_loads = self.image_loads.clone();
+        let ctx = ctx.clone();
+        let images: Vec<(String, PathBuf)> = AssetType::iter()
+            .filter_map(|asset_type| self.asset_libraries.get(&asset_type))
+            .flat_map(|library| library.values())
+            .filter(|asset| asset.image_data.is_none())
+            .map(|asset| (asset.id.clone(), asset.path.clone()))
+            .collect();
 
-                let result = match bytes {
-                    Ok(bytes) => image::load_from_memory(&bytes)
-                        .map(|img| Arc::new(img.to_rgba8()))
-                        .map_err(|e| e.to_string()),
-                    Err(e) => Err(e.to_string()),
-                };
-                (id, result)
-            }))
-            .await;
+        self.spawn_background(async move {
+            let mut images = images.into_iter();
+            loop {
+                image_loads.wait_for_visible().await;
 
-            for result in results {
-                if sender.unbounded_send(result).is_err() {
-                    log::warn!("Image receiver dropped before the images were sent");
+                let batch: Vec<_> = images
+                    .by_ref()
+                    .filter(|(id, _)| image_loads.request(id))
+                    .take(PRELOAD_BATCH_SIZE)
+                    .collect();
+                if batch.is_empty() {
+                    break;
+                }
+                if !load_images(&sender, batch, true).await {
                     return;
+                }
+
+                if image_loads.repaint_wanted.swap(false, Ordering::SeqCst) {
+                    ctx.request_repaint();
                 }
             }
             ctx.request_repaint();
-        };
-
-        #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_futures::spawn_local(task);
-
-        #[cfg(not(target_arch = "wasm32"))]
-        self.tokio_runtime.spawn(task);
+        });
     }
 
-    /// Queues every asset for the background preload, in asset type order.
-    fn queue_preload(&mut self) {
-        self.preload_queue = AssetType::iter()
-            .filter_map(|asset_type| {
-                self.asset_libraries
-                    .get(&asset_type)
-                    .map(|library| library.keys().map(move |id| (asset_type, id.clone())))
-            })
-            .flatten()
-            .collect();
-    }
-
-    /// Starts the next preload batch, but only while nothing the user is looking at is loading.
-    ///
-    /// Each batch repaints once when done, which calls this again, so the preload runs
-    /// itself to the end without input.
-    pub(crate) fn continue_preload(&mut self, ctx: &Context) {
-        if !self.visible_loads.is_empty() || !self.preload_in_flight.is_empty() {
-            return;
-        }
-
-        let mut batch = Vec::with_capacity(PRELOAD_BATCH_SIZE);
-        while batch.len() < PRELOAD_BATCH_SIZE
-            && let Some((asset_type, id)) = self.preload_queue.pop_front()
-        {
-            if self.images_in_flight.contains(&id) {
-                continue;
-            }
-            if let Some(asset) = self
-                .asset_libraries
-                .get(&asset_type)
-                .and_then(|library| library.get(&id))
-                && asset.image_data.is_none()
-            {
-                batch.push((id, asset.path.clone()));
-            }
-        }
-
-        if batch.is_empty() {
-            return;
-        }
-        for (id, _) in &batch {
-            self.images_in_flight.insert(id.clone());
-            self.preload_in_flight.insert(id.clone());
-        }
-        self.spawn_image_loads(ctx, batch, true);
-    }
-
+    /// Draws the art at the given positions in a library. Returns the art that was clicked, if any.
     fn display_assets(
         &mut self,
         ctx: &Context,
         ui: &mut Ui,
-        library: &IndexMap<String, Asset>,
-        shown_assets: &[&Asset],
+        asset_type: AssetType,
+        shown_assets: &[usize],
     ) -> Option<Asset> {
         let mut clicked_asset = None;
 
         let available_width = ui.available_width();
-        let is_token = library
-            .first()
-            .map(|(_, a)| a.asset_type == AssetType::Token)
-            .unwrap_or(false);
-        let base_size = if is_token { 64.0 } else { 96.0 };
+        let base_size = if asset_type == AssetType::Token {
+            64.0
+        } else {
+            96.0
+        };
 
         let button_size_val = (available_width / base_size).floor().max(1.0) * base_size;
         let button_size = Vec2::splat(button_size_val);
 
         let spacing = ui.spacing().item_spacing.y;
         let show_tags = self.filters_expanded
-            && library
-                .values()
-                .any(|asset| !asset.categories.is_empty() || !asset.contributors.is_empty());
+            && self
+                .asset_libraries
+                .get(&asset_type)
+                .is_some_and(|library| {
+                    library
+                        .values()
+                        .any(|asset| !asset.categories.is_empty() || !asset.contributors.is_empty())
+                });
         let label_height = if show_tags { 40.0 } else { 20.0 };
         let total_item_size = vec2(button_size.x, button_size.y + spacing + label_height);
 
         let asset_filter = self.asset_filter.clone();
         let mut tag_clicks = Vec::new();
-        for &asset in shown_assets {
+        for &index in shown_assets {
             let (rect, response) = ui.allocate_at_least(total_item_size, egui::Sense::click());
 
+            let Some((_, asset)) = self
+                .asset_libraries
+                .get(&asset_type)
+                .and_then(|library| library.get_index(index))
+            else {
+                continue;
+            };
+
             if ui.is_rect_visible(rect) {
+                // Only what's on screen is cloned, as drawing it can start a load
+                let asset = &asset.clone();
                 ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                     ui.vertical(|ui| {
                         let mut selected = false;
@@ -810,9 +943,15 @@ impl FECharacterCreator {
         }
     }
 
+    /// Returns a copy of the character in the units saved in files.
+    ///
+    /// A restored or loaded character is already in those units until the first canvas layout.
     fn get_normalised_character(&self) -> Character {
         let mut normalised_character = self.character.clone();
-        normalised_character.normalise(point_size(self.portrait_rect), point_size(self.token_rect));
+        if !self.is_character_normalised {
+            normalised_character
+                .normalise(point_size(self.portrait_rect), point_size(self.token_rect));
+        }
         normalised_character
     }
 
@@ -1002,40 +1141,73 @@ impl FECharacterCreator {
     }
 }
 
+impl FECharacterCreator {
+    /// Logs a failure, and tells the user why.
+    fn report_failure(&mut self, message: &str, error: impl Display) {
+        log::error!("{message}: {error}");
+        self.toasts
+            .error(wrap_toast_text(&format!("{message}: {error}")))
+            .duration(FAILURE_TOAST_DURATION);
+    }
+}
+
+/// Breaks text into lines, as toasts don't wrap and long ones run off the screen.
+fn wrap_toast_text(text: &str) -> String {
+    let mut wrapped = String::with_capacity(text.len());
+    let mut line_length = 0;
+    for word in text.split(' ') {
+        let word_length = word.chars().count();
+        if line_length > 0 {
+            if line_length + 1 + word_length > TOAST_LINE_LENGTH {
+                wrapped.push('\n');
+                line_length = 0;
+            } else {
+                wrapped.push(' ');
+                line_length += 1;
+            }
+        }
+        wrapped.push_str(word);
+        line_length += word_length;
+    }
+    wrapped
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 impl FECharacterCreator {
-    fn save_image(image: &RgbaImage, filename_stem: String) {
+    /// Runs a task in the background.
+    fn spawn_background(&self, task: impl Future<Output = ()> + Send + 'static) {
+        self.tokio_runtime.spawn(task);
+    }
+
+    /// Saves an image to a chosen path. Cancelling the dialog isn't a failure.
+    fn save_image(
+        image: &RgbaImage,
+        filename_stem: String,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("PNG Image", &["png"])
             .set_file_name(&filename_stem)
             .save_file()
-            && let Err(e) = image.save(path)
         {
-            log::error!("Failed to save image: {e}");
+            image.save(path)?;
         }
+        Ok(())
     }
 
-    fn save_fecc(&self, filename_stem: String) {
+    /// Saves the character to a chosen path. Cancelling the dialog isn't a failure.
+    fn save_fecc(&self, filename_stem: String) -> Result<(), Box<dyn Error + Send + Sync>> {
         let normalised_character = self.get_normalised_character();
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("FECC Character", &["fecc"])
             .set_file_name(&filename_stem)
             .save_file()
         {
-            match serde_json::to_string_pretty(&normalised_character) {
-                Ok(json) => {
-                    if let Err(e) = std::fs::write(path, json) {
-                        log::error!("Failed to save FECC file: {e}");
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to serialize character: {e}");
-                }
-            }
+            std::fs::write(path, serde_json::to_string_pretty(&normalised_character)?)?;
         }
+        Ok(())
     }
 
-    fn load_fecc(&self) {
+    fn load_fecc(&self, ctx: &Context) {
         let sender = self.loaded_character_sender.clone();
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("FECC Character", &["fecc"])
@@ -1058,46 +1230,47 @@ impl FECharacterCreator {
             sender
                 .unbounded_send(result)
                 .expect("Failed to send loaded character");
+            ctx.request_repaint();
         }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl FECharacterCreator {
-    fn save_image(image: &RgbaImage, filename_stem: String) {
+    /// Runs a task in the background.
+    #[expect(
+        clippy::unused_self,
+        reason = "Matches native, which needs its runtime"
+    )]
+    fn spawn_background(&self, task: impl Future<Output = ()> + 'static) {
+        wasm_bindgen_futures::spawn_local(task);
+    }
+
+    /// Downloads an image as a PNG.
+    fn save_image(
+        image: &RgbaImage,
+        filename_stem: String,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         use std::io::Cursor;
 
         let mut bytes: Vec<u8> = Vec::new();
-        if let Err(e) = image.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png) {
-            log::error!("Failed to encode image as PNG: {e}");
-            return;
-        }
+        image.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)?;
 
-        let filename = format!("{filename_stem}.png");
-
-        if let Err(e) = fecc_core::file_io::trigger_download(&bytes, &filename) {
-            log::error!("Failed to trigger download: {e}");
-        }
+        fecc_core::file_io::trigger_download(&bytes, &format!("{filename_stem}.png"))
     }
 
-    fn save_fecc(&self, filename_stem: String) {
+    /// Downloads the character as a save file.
+    fn save_fecc(&self, filename_stem: String) -> Result<(), Box<dyn Error + Send + Sync>> {
         let normalised_character = self.get_normalised_character();
-        match serde_json::to_string_pretty(&normalised_character) {
-            Ok(json) => {
-                let filename = format!("{filename_stem}.fecc");
-                if let Err(e) = fecc_core::file_io::trigger_download(json.as_bytes(), &filename) {
-                    log::error!("Failed to trigger download: {e}");
-                }
-            }
-            Err(e) => {
-                log::error!("Failed to serialize character: {e}");
-            }
-        }
+        let json = serde_json::to_string_pretty(&normalised_character)?;
+
+        fecc_core::file_io::trigger_download(json.as_bytes(), &format!("{filename_stem}.fecc"))
     }
 
-    fn load_fecc(&self) {
+    fn load_fecc(&self, ctx: &Context) {
         let sender = self.loaded_character_sender.clone();
         let asset_libraries = self.asset_libraries.clone();
+        let ctx = ctx.clone();
         wasm_bindgen_futures::spawn_local(async move {
             if let Some(file) = rfd::AsyncFileDialog::new()
                 .add_filter("FECC Character", &["fecc"])
@@ -1111,7 +1284,7 @@ impl FECharacterCreator {
                     .map(|s| s.to_owned());
                 let bytes = file.read().await;
                 let result = String::from_utf8(bytes)
-                    .map_err(|e| format!("Failed to read file as UTF-8: {e}"))
+                    .map_err(|e| format!("File isn't valid UTF-8: {e}"))
                     .and_then(|content| {
                         fecc_core::file_io::parse_character_save(
                             &content,
@@ -1122,6 +1295,7 @@ impl FECharacterCreator {
                 if sender.unbounded_send(result).is_err() {
                     log::warn!("Character receiver dropped before the loaded save was sent");
                 }
+                ctx.request_repaint();
             }
         });
     }
@@ -1240,6 +1414,249 @@ pub(crate) fn asset_matches(filter: &AssetFilter, search_query: &str, asset: &As
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::pin::pin;
+    use std::task::{Context as TaskContext, Wake, Waker};
+
+    #[test]
+    fn image_loads_fetch_an_image_once_unless_it_failed() {
+        let image_loads = ImageLoads::default();
+
+        assert!(image_loads.request("a"), "Nothing has claimed it yet");
+        assert!(!image_loads.request("a"), "It's already on its way");
+        assert!(image_loads.request("b"), "Other images are unaffected");
+
+        image_loads.release("a");
+        assert!(
+            image_loads.request("a"),
+            "A failed image can be fetched again"
+        );
+    }
+
+    /// Records being woken.
+    #[derive(Default)]
+    struct WokenFlag(AtomicBool);
+
+    impl Wake for WokenFlag {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn image_loads_preload_waits_for_every_visible_load_and_is_woken() {
+        let image_loads = ImageLoads::default();
+        image_loads.start_visible();
+        image_loads.start_visible();
+
+        let flag = Arc::new(WokenFlag::default());
+        let waker = Waker::from(flag.clone());
+        let mut cx = TaskContext::from_waker(&waker);
+        let mut wait = pin!(image_loads.wait_for_visible());
+
+        assert!(
+            wait.as_mut().poll(&mut cx).is_pending(),
+            "Two loads are running"
+        );
+
+        image_loads.finish_visible();
+        assert!(
+            flag.0.swap(false, Ordering::SeqCst),
+            "Each finish should wake it"
+        );
+        assert!(
+            wait.as_mut().poll(&mut cx).is_pending(),
+            "One load is running"
+        );
+
+        image_loads.finish_visible();
+        assert!(
+            flag.0.load(Ordering::SeqCst),
+            "The last finish should wake it"
+        );
+        assert!(wait.as_mut().poll(&mut cx).is_ready(), "Nothing is running");
+    }
+
+    #[test]
+    fn image_retries_wait_longer_after_each_failure_up_to_the_limit() {
+        let mut retries = ImageRetries::default();
+        assert_eq!(retries.wait("a", 0.0), None, "Nothing has failed yet");
+
+        assert!(
+            retries.record_failure("a", 100.0),
+            "This is the first failure"
+        );
+        assert_eq!(retries.wait("a", 100.0), Some(FIRST_IMAGE_RETRY_DELAY));
+        assert_eq!(
+            retries.wait("b", 100.0),
+            None,
+            "Other images are unaffected"
+        );
+
+        assert!(
+            !retries.record_failure("a", 200.0),
+            "This is a repeat failure"
+        );
+        assert_eq!(
+            retries.wait("a", 200.0),
+            Some(FIRST_IMAGE_RETRY_DELAY * 2.0)
+        );
+
+        for _ in 0..20 {
+            retries.record_failure("a", 300.0);
+        }
+        assert_eq!(retries.wait("a", 300.0), Some(MAX_IMAGE_RETRY_DELAY));
+    }
+
+    #[test]
+    fn image_retries_allow_a_fetch_once_due_and_start_over_after_a_success() {
+        let mut retries = ImageRetries::default();
+        retries.record_failure("a", 0.0);
+        retries.record_failure("a", 0.0);
+        assert_eq!(retries.wait("a", FIRST_IMAGE_RETRY_DELAY * 2.0), None);
+
+        retries.clear("a");
+        assert_eq!(retries.wait("a", 0.0), None);
+        assert!(
+            retries.record_failure("a", 0.0),
+            "The count should start over"
+        );
+        assert_eq!(retries.wait("a", 0.0), Some(FIRST_IMAGE_RETRY_DELAY));
+    }
+
+    #[test]
+    fn wrap_toast_text_breaks_long_text_between_words() {
+        let text =
+            "Failed to load character: Save uses art that isn't in the library: A_Face, B_Hair";
+        let wrapped = wrap_toast_text(text);
+
+        assert_eq!(
+            wrapped.replace('\n', " "),
+            text,
+            "Only spaces should change"
+        );
+        assert!(wrapped.contains('\n'), "Long text should be broken up");
+        assert!(
+            wrapped
+                .lines()
+                .all(|line| line.chars().count() <= TOAST_LINE_LENGTH),
+            "No line should be over the limit: {wrapped}"
+        );
+    }
+
+    #[test]
+    fn wrap_toast_text_keeps_short_text_and_long_words_whole() {
+        assert_eq!(wrap_toast_text("Short text"), "Short text");
+
+        let long_word = "a".repeat(TOAST_LINE_LENGTH + 1);
+        assert_eq!(wrap_toast_text(&long_word), long_word);
+        assert_eq!(
+            wrap_toast_text(&format!("a {long_word}")),
+            format!("a\n{long_word}")
+        );
+    }
+
+    /// Holds saved values in memory.
+    #[derive(Default)]
+    struct MemoryStorage(std::collections::HashMap<String, String>);
+
+    impl eframe::Storage for MemoryStorage {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_owned(), value);
+        }
+
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
+
+        fn flush(&mut self) {}
+    }
+
+    /// Creates an app with a face at the given place and a laid out 441 point canvas.
+    fn app_with_face(x: f32, y: f32, scale: f32) -> FECharacterCreator {
+        let canvas = Rect::from_min_size(egui::pos2(209.0, 34.0), vec2(441.0, 441.0));
+        let mut app = FECharacterCreator {
+            portrait_rect: canvas,
+            token_rect: canvas,
+            ..Default::default()
+        };
+        app.character.set_character_part(
+            &AssetType::Face,
+            CharacterPart {
+                position: Point::new(x, y),
+                scale,
+                rotation: 0.0,
+                flipped: false,
+                asset: Asset::new(
+                    "Test".to_owned(),
+                    "art/Test_Face.png".into(),
+                    None,
+                    AssetType::Face,
+                ),
+            },
+        );
+        app
+    }
+
+    /// Saves the app, then returns the saved face's position and scale.
+    fn saved_face(app: &mut FECharacterCreator) -> (f32, f32, f32) {
+        let mut storage = MemoryStorage::default();
+        eframe::App::save(app, &mut storage);
+        let saved: FECharacterCreator =
+            eframe::get_value(&storage, eframe::APP_KEY).expect("Failed to read the save");
+        let face = saved
+            .character
+            .get_character_part(&AssetType::Face)
+            .expect("The save has no face");
+        (face.position.x, face.position.y, face.scale)
+    }
+
+    #[test]
+    fn test_save_before_first_layout_keeps_normalised_values() {
+        let mut app = app_with_face(0.5, 0.6, 0.0083);
+        app.is_character_normalised = true;
+
+        // A second save stays the same, as each page unload before a frame saves again.
+        for _ in 0..2 {
+            assert_eq!(saved_face(&mut app), (0.5, 0.6, 0.0083));
+        }
+        assert!(app.is_character_normalised);
+    }
+
+    #[test]
+    fn test_save_after_layout_normalises_once() {
+        let mut app = app_with_face(220.5, 264.6, 3.66);
+
+        let (x, y, scale) = saved_face(&mut app);
+
+        assert!((x - 0.5).abs() < 1e-6);
+        assert!((y - 0.6).abs() < 1e-6);
+        assert!((scale - 3.66 / 441.0).abs() < 1e-6);
+
+        // The live character stays in canvas pixels.
+        let face = app
+            .character
+            .get_character_part(&AssetType::Face)
+            .expect("The character has no face");
+        assert_eq!(face.scale, 3.66);
+    }
+
+    #[test]
+    fn test_save_file_before_first_layout_keeps_normalised_values() {
+        let mut app = app_with_face(0.5, 0.6, 0.0083);
+        app.is_character_normalised = true;
+
+        let face = app
+            .get_normalised_character()
+            .face
+            .expect("The character has no face");
+
+        assert_eq!(face.position, Point::new(0.5, 0.6));
+        assert_eq!(face.scale, 0.0083);
+    }
 
     #[test]
     fn test_find_max_canvas_sizes_square() {

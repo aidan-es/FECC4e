@@ -5,3 +5,8 @@
 [default.extend-words]
 egui = "egui" # Example for how to ignore a false positive
 wil = "wil"
+
+[files]
+extend-exclude = [
+    "assets/third-party-licences.html", # Generated, and quotes other projects' names and licences
+]

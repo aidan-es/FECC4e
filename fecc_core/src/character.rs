@@ -1,4 +1,4 @@
-// Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+// Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
 use crate::asset::{Asset, AssetType};
 use crate::asset_aliases;
 use crate::character::Colourable::{
@@ -9,6 +9,11 @@ use crate::types::{Point, Rgba};
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use strum_macros::{Display, EnumIter};
+
+/// The largest position, scale or rotation a saved part can have.
+///
+/// Well beyond what a canvas can show, while staying finite once converted to canvas pixels.
+const MAX_SAVED_TRANSFORM: f32 = 1_000_000.0;
 
 /// Variants available for a Colourable
 #[derive(
@@ -129,6 +134,16 @@ impl CharacterPart {
         self.position.x *= canvas_size.x;
         self.position.y = canvas_size.y / 2.0 + (self.position.y - 0.5) * canvas_size.x;
         self.scale *= canvas_size.x;
+    }
+
+    /// Returns whether the saved position, scale and rotation can be drawn.
+    fn has_usable_transform(&self) -> bool {
+        let in_range = |value: f32| value.abs() <= MAX_SAVED_TRANSFORM;
+
+        in_range(self.position.x)
+            && in_range(self.position.y)
+            && in_range(self.rotation)
+            && (0.0..=MAX_SAVED_TRANSFORM).contains(&self.scale)
     }
 }
 
@@ -382,6 +397,33 @@ impl Character {
         }
         missing
     }
+
+    /// Repairs what a save's format can't rule out.
+    ///
+    /// Colours missing from the save take their defaults, as recolouring needs them all. Parts
+    /// with an unusable position, scale or rotation are removed.
+    ///
+    /// Returns the ids of the removed parts.
+    pub fn repair(&mut self) -> Vec<String> {
+        for (colourable, colours) in Self::default().character_colours {
+            self.character_colours.entry(colourable).or_insert(colours);
+        }
+
+        let mut removed = Vec::new();
+        for part in [
+            &mut self.armour,
+            &mut self.face,
+            &mut self.hair,
+            &mut self.hair_back,
+            &mut self.accessory,
+            &mut self.token,
+        ] {
+            if let Some(unusable) = part.take_if(|part| !part.has_usable_transform()) {
+                removed.push(unusable.asset.id);
+            }
+        }
+        removed
+    }
 }
 
 #[cfg(test)]
@@ -454,6 +496,54 @@ mod tests {
         assert!((art_offset_x - 24.0).abs() < 1e-4);
         assert!((art_offset_y - 24.0).abs() < 1e-4);
         assert!((face.position.y - 50.0).abs() < 1e-4, "stays centred");
+    }
+
+    #[test]
+    fn test_repair_fills_missing_colours_and_keeps_saved_ones() {
+        let saved_skin = CharacterPartColours::new(&Rgba::new(1, 2, 3, 255));
+        let mut character = Character {
+            character_colours: [(Skin, saved_skin.clone())].into_iter().collect(),
+            ..Default::default()
+        };
+
+        character.repair();
+
+        assert_eq!(character.character_colours[&Skin], saved_skin);
+        assert_eq!(
+            character.character_colours[&Hair],
+            Character::default().character_colours[&Hair]
+        );
+    }
+
+    #[test]
+    fn test_repair_removes_parts_with_unusable_transforms() {
+        for (x, scale, rotation) in [
+            (f32::NAN, 1.0, 0.0),
+            (f32::INFINITY, 1.0, 0.0),
+            (0.5, f32::NAN, 0.0),
+            (0.5, f32::INFINITY, 0.0),
+            (0.5, -1.0, 0.0),
+            (0.5, MAX_SAVED_TRANSFORM * 2.0, 0.0),
+            (0.5, 1.0, f32::NAN),
+        ] {
+            let mut part = part_at(x, 0.5, scale);
+            part.rotation = rotation;
+            let mut character = Character {
+                face: Some(part),
+                hair: Some(part_at(0.5, 0.5, 1.0 / 96.0)),
+                ..Default::default()
+            };
+
+            let removed = character.repair();
+
+            assert_eq!(
+                removed,
+                ["Test_Face"],
+                "x {x}, scale {scale}, rotation {rotation}"
+            );
+            assert!(character.face.is_none());
+            assert!(character.hair.is_some(), "Should keep the usable part");
+        }
     }
 
     #[test]

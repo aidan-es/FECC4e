@@ -1,0 +1,41 @@
+# Copyright (C) 2026 aidan-es. Licensed under the GNU AGPLv3.
+# Configures cargo-about, which writes assets/third-party-licences.html.
+# Regenerate it with `cargo make licences`.
+
+# Licences in order of preference. Where a crate offers a choice, the first one listed here is used.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    # Copyleft licences compatible with FECC4e's AGPLv3, last so permissive choices win
+    "LGPL-2.1-only",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+]
+
+# Skips FECC4e's own crates, as none are published
+private = { ignore = true }
+
+# The release targets in native.yml, and the web build
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-apple-darwin",
+    "wasm32-unknown-unknown",
+]
+
+# Build and dev dependencies aren't shipped. The fonts subset at build time are credited in the
+# About window instead.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true

@@ -1,0 +1,19 @@
+name: Install cargo-deny
+description: Downloads the prebuilt cargo-deny release used by CI (Linux x86-64 runners)
+runs:
+  using: composite
+  steps:
+    - name: Download cargo-deny
+      shell: bash
+      env:
+        CARGO_DENY_VERSION: 0.20.2
+        # Change together with CARGO_DENY_VERSION
+        CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+      run: |
+        name="cargo-deny-$CARGO_DENY_VERSION-x86_64-unknown-linux-musl"
+        url="https://github.com/EmbarkStudios/cargo-deny/releases/download/$CARGO_DENY_VERSION/$name.tar.gz"
+        archive="$RUNNER_TEMP/cargo-deny.tar.gz"
+        curl -sSfL -o "$archive" "$url"
+        echo "$CARGO_DENY_SHA256  $archive" | sha256sum --check --strict -
+        tar -xzf "$archive" -C "$HOME/.cargo/bin" --strip-components=1 "$name/cargo-deny"
+        cargo deny --version

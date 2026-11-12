@@ -1,27 +1,28 @@
-// Copyright (C) 2025 aidan-es. Licensed under the GNU AGPLv3.
+// Copyright (C) 2025-2026 aidan-es. Licensed under the GNU AGPLv3.
+import { fetch_gzip_bytes, read_art_bundle } from './art_bundle.js';
+
 const canvas = document.getElementById('rainCanvas');
 const ctx = canvas.getContext('2d');
 
 // Configuration
 const SPEED = 2; // Falling speed
 const DENSITY = 1; // Probability of a new character spawning per frame (0-1)
-const SPRITE_SIZE = 96; // Size of each character in the sprite sheet
 const SCALE = 0.5; // Scale of characters on screen
-const TOTAL_CHARACTERS = 404;
-const COLUMNS = 20; // Number of columns in the sprite sheet
 
-// Load sprite sheet
-const spriteSheet = new Image();
-spriteSheet.src = '404-sprites.png';
+// The characters, made by fecc_cli
+const sprites = await Promise.all(
+    read_art_bundle(await fetch_gzip_bytes('404-characters.gz', 'auto'))
+        .map((file) => createImageBitmap(new Blob([file.data], { type: 'image/png' })))
+);
 
 let particles = [];
 
 class Particle {
     constructor() {
+        this.sprite = sprites[Math.floor(Math.random() * sprites.length)];
         this.x = Math.random() * canvas.width;
-        this.y = -SPRITE_SIZE * SCALE;
+        this.y = -this.sprite.height * SCALE;
         this.speed = SPEED + Math.random() * 2; // Add some variation
-        this.index = Math.floor(Math.random() * TOTAL_CHARACTERS);
     }
 
     update() {
@@ -29,15 +30,9 @@ class Particle {
     }
 
     draw() {
-        const col = this.index % COLUMNS;
-        const row = Math.floor(this.index / COLUMNS);
-        const sx = col * SPRITE_SIZE;
-        const sy = row * SPRITE_SIZE;
-
         ctx.drawImage(
-            spriteSheet,
-            sx, sy, SPRITE_SIZE, SPRITE_SIZE,
-            Math.floor(this.x), Math.floor(this.y), SPRITE_SIZE * SCALE, SPRITE_SIZE * SCALE
+            this.sprite,
+            Math.floor(this.x), Math.floor(this.y), this.sprite.width * SCALE, this.sprite.height * SCALE
         );
     }
 }
@@ -72,6 +67,4 @@ function animate() {
     requestAnimationFrame(animate);
 }
 
-spriteSheet.onload = () => {
-    animate();
-};
+animate();
